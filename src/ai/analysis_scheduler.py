@@ -1,427 +1,672 @@
-"""
+“””
 AI Analysis Scheduler for SmartArb Engine
-Automated scheduling and execution of Claude AI analysis
-"""
+Automated scheduling and execution of Claude AI analysis tasks
+“””
 
 import asyncio
+from typing import Dict, List, Optional, Any, Callable
+from dataclasses import dataclass
+from enum import Enum
+import time
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
 import structlog
 from croniter import croniter
 
-from .claude_integration import ClaudeAnalysisEngine, ClaudeRecommendation
-from ..utils.notifications import NotificationManager, NotificationLevel
-from ..utils.config import ConfigManager
-from ..db.connection import DatabaseManager
+from .claude_integration import ClaudeAnalysisEngine, AnalysisType, AnalysisContext
 
-logger = structlog.get_logger(__name__)
+logger = structlog.get_logger(**name**)
 
+class TriggerType(Enum):
+“”“Types of analysis triggers”””
+SCHEDULED = “scheduled”
+PERFORMANCE_THRESHOLD = “performance_threshold”
+RISK_THRESHOLD = “risk_threshold”
+ERROR_THRESHOLD = “error_threshold”
+MANUAL = “manual”
+EMERGENCY = “emergency”
+
+@dataclass
+class AnalysisTrigger:
+“”“Analysis trigger configuration”””
+id: str
+name: str
+trigger_type: TriggerType
+analysis_type: AnalysisType
+enabled: bool
+schedule: Optional[str] = None  # Cron expression for scheduled triggers
+threshold_value: Optional[float] = None  # For threshold-based triggers
+threshold_metric: Optional[str] = None  # Metric to check for threshold triggers
+cooldown_minutes: int = 60  # Minimum time between triggers
+priority: str = “medium”  # low, medium, high, critical
+last_triggered: float = 0
+trigger_count: int = 0
+
+```
+def should_trigger(self, current_metrics: Dict[str, Any] = None) -> bool:
+    """Check if trigger should fire"""
+    now = time.time()
+    
+    # Check cooldown
+    if now - self.last_triggered < (self.cooldown_minutes * 60):
+        return False
+    
+    if self.trigger_type == TriggerType.SCHEDULED:
+        return self._check_schedule_trigger()
+    elif self.trigger_type in [TriggerType.PERFORMANCE_THRESHOLD, 
+                              TriggerType.RISK_THRESHOLD, 
+                              TriggerType.ERROR_THRESHOLD]:
+        return self._check_threshold_trigger(current_metrics)
+    
+    return False
+
+def _check_schedule_trigger(self) -> bool:
+    """Check if scheduled trigger should fire"""
+    if not self.schedule:
+        return False
+    
+    try:
+        cron = croniter(self.schedule, datetime.fromtimestamp(self.last_triggered))
+        next_run = cron.get_next()
+        return time.time() >= next_run
+    except Exception as e:
+        logger.error("schedule_trigger_check_failed", 
+                    trigger_id=self.id, 
+                    schedule=self.schedule,
+                    error=str(e))
+        return False
+
+def _check_threshold_trigger(self, metrics: Dict[str, Any]) -> bool:
+    """Check if threshold trigger should fire"""
+    if not metrics or not self.threshold_metric or self.threshold_value is None:
+        return False
+    
+    current_value = metrics.get(self.threshold_metric)
+    if current_value is None:
+        return False
+    
+    try:
+        current_value = float(current_value)
+        
+        if self.trigger_type == TriggerType.PERFORMANCE_THRESHOLD:
+            # Performance degrades (value goes below threshold)
+            return current_value < self.threshold_value
+        elif self.trigger_type == TriggerType.RISK_THRESHOLD:
+            # Risk increases (value goes above threshold)
+            return current_value > self.threshold_value
+        elif self.trigger_type == TriggerType.ERROR_THRESHOLD:
+            # Error rate increases (value goes above threshold)
+            return current_value > self.threshold_value
+            
+    except (ValueError, TypeError):
+        logger.warning("threshold_value_conversion_failed",
+                     trigger_id=self.id,
+                     metric=self.threshold_metric,
+                     value=current_value)
+    
+    return False
+```
 
 class AIAnalysisScheduler:
-    """
-    Automated AI Analysis Scheduler
-    
-    Features:
-    - Scheduled performance analysis
-    - Adaptive scheduling based on performance
-    - Emergency analysis triggers
-    - Recommendation tracking and implementation
-    - Performance feedback loop
-    """
-    
-    def __init__(self, config: ConfigManager, db_manager: DatabaseManager, 
-                 notification_manager: NotificationManager):
-        self.config = config
-        self.db_manager = db_manager
-        self.notification_manager = notification_manager
-        
-        # Initialize Claude integration
-        self.claude_engine = ClaudeAnalysisEngine(config, db_manager)
-        
-        # Scheduling configuration
-        self.schedule_config = config.get('ai.scheduling', {})
-        self.default_schedule = self.schedule_config.get('default', '0 */6 * * *')  # Every 6 hours
-        self.emergency_triggers = self.schedule_config.get('emergency_triggers', {})
-        
-        # Analysis state
-        self.is_running = False
-        self.scheduler_task = None
-        self.last_analysis = None
-        self.analysis_queue = asyncio.Queue()
-        
-        # Performance tracking
-        self.total_analyses = 0
-        self.successful_analyses = 0
-        self.recommendations_implemented = 0
-        
-        # Emergency analysis triggers
-        self.performance_thresholds = {
-            'low_success_rate': 60.0,  # Below 60% success rate
-            'high_drawdown': -100.0,   # More than $100 loss
-            'execution_latency': 5000, # Over 5 seconds avg latency
-            'failed_trades_streak': 5   # 5 consecutive failed trades
-        }
-        
-        logger.info("ai_analysis_scheduler_initialized",
-                   default_schedule=self.default_schedule)
-    
-    async def start(self):
-        """Start the analysis scheduler"""
-        if self.is_running:
-            logger.warning("scheduler_already_running")
-            return
-        
-        self.is_running = True
-        
-        # Start scheduler task
-        self.scheduler_task = asyncio.create_task(self._scheduler_loop())
-        
-        # Start analysis processor
-        self.processor_task = asyncio.create_task(self._analysis_processor())
-        
-        logger.info("ai_analysis_scheduler_started")
-        
-        # Send initial notification
-        await self.notification_manager.send_notification(
-            "🧠 AI Analysis Scheduler Started",
-            f"Automated analysis will run: {self.default_schedule}",
-            NotificationLevel.INFO
-        )
-    
-    async def stop(self):
-        """Stop the analysis scheduler"""
-        if not self.is_running:
-            return
-        
-        self.is_running = False
-        
-        # Cancel tasks
-        if self.scheduler_task:
-            self.scheduler_task.cancel()
-            try:
-                await self.scheduler_task
-            except asyncio.CancelledError:
-                pass
-        
-        if self.processor_task:
-            self.processor_task.cancel()
-            try:
-                await self.processor_task
-            except asyncio.CancelledError:
-                pass
-        
-        logger.info("ai_analysis_scheduler_stopped")
-    
-    async def _scheduler_loop(self):
-        """Main scheduler loop"""
-        cron = croniter(self.default_schedule, datetime.now())
-        
-        while self.is_running:
-            try:
-                # Calculate next run time
-                next_run = cron.get_next(datetime)
-                sleep_duration = (next_run - datetime.now()).total_seconds()
-                
-                if sleep_duration > 0:
-                    logger.debug("scheduler_waiting", 
-                               next_run=next_run.isoformat(),
-                               sleep_duration=sleep_duration)
-                    
-                    # Sleep until next scheduled time, but check for emergency triggers
-                    await self._sleep_with_emergency_check(sleep_duration)
-                
-                # Queue scheduled analysis
-                if self.is_running:
-                    await self.queue_analysis('scheduled')
-                
-            except Exception as e:
-                logger.error("scheduler_loop_error", error=str(e))
-                await asyncio.sleep(60)  # Wait 1 minute before retrying
-    
-    async def _sleep_with_emergency_check(self, duration: float):
-        """Sleep with periodic emergency trigger checks"""
-        check_interval = min(300, duration / 10)  # Check every 5 minutes or 10% of duration
-        elapsed = 0
-        
-        while elapsed < duration and self.is_running:
-            sleep_time = min(check_interval, duration - elapsed)
-            await asyncio.sleep(sleep_time)
-            elapsed += sleep_time
-            
-            # Check for emergency triggers
-            if await self._check_emergency_triggers():
-                logger.info("emergency_analysis_triggered")
-                await self.queue_analysis('emergency')
-                break
-    
-    async def _check_emergency_triggers(self) -> bool:
-        """Check if emergency analysis should be triggered"""
-        try:
-            # Get recent performance data
-            recent_data = await self._get_recent_performance_data()
-            
-            # Check each trigger condition
-            triggers_activated = []
-            
-            # Low success rate
-            if recent_data.get('success_rate', 100) < self.performance_thresholds['low_success_rate']:
-                triggers_activated.append('low_success_rate')
-            
-            # High drawdown
-            if recent_data.get('drawdown', 0) < self.performance_thresholds['high_drawdown']:
-                triggers_activated.append('high_drawdown')
-            
-            # High execution latency
-            if recent_data.get('avg_latency', 0) > self.performance_thresholds['execution_latency']:
-                triggers_activated.append('execution_latency')
-            
-            # Consecutive failed trades
-            if recent_data.get('consecutive_failures', 0) >= self.performance_thresholds['failed_trades_streak']:
-                triggers_activated.append('failed_trades_streak')
-            
-            if triggers_activated:
-                logger.warning("emergency_triggers_activated", triggers=triggers_activated)
-                
-                # Send emergency notification
-                await self.notification_manager.send_notification(
-                    "🚨 Emergency AI Analysis Triggered",
-                    f"Triggers: {', '.join(triggers_activated)}",
-                    NotificationLevel.ERROR
-                )
-                
-                return True
-            
-            return False
-            
-        except Exception as e:
-            logger.error("emergency_trigger_check_failed", error=str(e))
-            return False
-    
-    async def _get_recent_performance_data(self) -> Dict[str, Any]:
-        """Get recent performance data for trigger checking"""
-        # This would integrate with the actual portfolio and risk managers
-        # For now, return mock data structure
-        return {
-            'success_rate': 75.0,
-            'drawdown': -25.0,
-            'avg_latency': 1200,
-            'consecutive_failures': 2
-        }
-    
-    async def queue_analysis(self, analysis_type: str = 'scheduled', 
-                           priority: str = 'normal', 
-                           custom_focus: Optional[str] = None):
-        """Queue an analysis request"""
-        analysis_request = {
-            'type': analysis_type,
-            'priority': priority,
-            'custom_focus': custom_focus,
-            'timestamp': datetime.now(),
-            'id': f"{analysis_type}_{int(datetime.now().timestamp())}"
-        }
-        
-        await self.analysis_queue.put(analysis_request)
-        
-        logger.info("analysis_queued", 
-                   type=analysis_type,
-                   priority=priority,
-                   queue_size=self.analysis_queue.qsize())
-    
-    async def _analysis_processor(self):
-        """Process queued analysis requests"""
-        while self.is_running:
-            try:
-                # Get next analysis request
-                analysis_request = await asyncio.wait_for(
-                    self.analysis_queue.get(), timeout=1.0
-                )
-                
-                # Execute analysis
-                await self._execute_analysis(analysis_request)
-                
-                # Mark task done
-                self.analysis_queue.task_done()
-                
-            except asyncio.TimeoutError:
-                continue  # Normal timeout, continue loop
-            except Exception as e:
-                logger.error("analysis_processor_error", error=str(e))
-                await asyncio.sleep(5)
-    
-    async def _execute_analysis(self, request: Dict[str, Any]):
-        """Execute a single analysis request"""
-        analysis_id = request['id']
-        analysis_type = request['type']
-        
-        logger.info("executing_analysis", 
-                   id=analysis_id,
-                   type=analysis_type)
-        
-        try:
-            start_time = datetime.now()
-            
-            # Run Claude analysis
-            recommendations = await self.claude_engine.run_automated_analysis()
-            
-            execution_time = (datetime.now() - start_time).total_seconds()
-            
-            if recommendations:
-                self.successful_analyses += 1
-                
-                # Process recommendations
-                await self._process_recommendations(recommendations, analysis_id)
-                
-                # Send success notification
-                await self.notification_manager.send_notification(
-                    f"🧠 AI Analysis Complete - {analysis_type.title()}",
-                    f"Found {len(recommendations)} recommendations\n"
-                    f"Execution time: {execution_time:.1f}s",
-                    NotificationLevel.INFO
-                )
-                
-                logger.info("analysis_completed_successfully",
-                           id=analysis_id,
-                           recommendations_count=len(recommendations),
-                           execution_time=execution_time)
-            else:
-                logger.warning("analysis_completed_no_recommendations", id=analysis_id)
-            
-            self.total_analyses += 1
-            self.last_analysis = datetime.now()
-            
-        except Exception as e:
-            logger.error("analysis_execution_failed", 
-                        id=analysis_id,
-                        error=str(e))
-            
-            # Send failure notification
-            await self.notification_manager.send_notification(
-                f"❌ AI Analysis Failed - {analysis_type.title()}",
-                f"Error: {str(e)}",
-                NotificationLevel.ERROR
-            )
-    
-    async def _process_recommendations(self, recommendations: List[ClaudeRecommendation], 
-                                     analysis_id: str):
-        """Process and categorize recommendations"""
-        
-        high_priority = [r for r in recommendations if r.priority == 'high']
-        critical_priority = [r for r in recommendations if r.priority == 'critical']
-        auto_applicable = [r for r in recommendations 
-                          if r.priority in ['low', 'medium'] and r.config_changes]
-        
-        # Send summary notification
-        summary = f"""
-📊 Analysis Results ({analysis_id}):
+“””
+AI Analysis Scheduler
 
-🔴 Critical: {len(critical_priority)}
-🟡 High Priority: {len(high_priority)}
-🟢 Auto-Applied: {len(auto_applicable)}
-📝 Total: {len(recommendations)}
-
-Top Recommendations:
+```
+Features:
+- Scheduled analysis execution
+- Threshold-based trigger system
+- Emergency analysis triggers
+- Priority-based execution queue
+- Cooldown management
+- Performance monitoring
 """
-        
-        # Add top 3 recommendations to summary
-        for i, rec in enumerate(recommendations[:3]):
-            summary += f"\n{i+1}. [{rec.priority.upper()}] {rec.title}"
-        
-        await self.notification_manager.send_notification(
-            "📋 AI Analysis Summary",
-            summary,
-            NotificationLevel.INFO
-        )
-        
-        # Send critical alerts immediately
-        for rec in critical_priority:
-            await self.notification_manager.send_notification(
-                f"🚨 CRITICAL: {rec.title}",
-                f"{rec.description}\n\nRisks: {', '.join(rec.risks or [])}",
-                NotificationLevel.CRITICAL
-            )
+
+def __init__(self, config: Dict[str, Any], db_manager=None, notification_manager=None):
+    self.config = config
+    self.db_manager = db_manager
+    self.notification_manager = notification_manager
     
-    async def request_manual_analysis(self, focus_area: str, 
-                                    custom_prompt: Optional[str] = None) -> str:
-        """Request manual analysis with specific focus"""
-        
-        logger.info("manual_analysis_requested", focus_area=focus_area)
-        
-        if custom_prompt:
-            prompt = f"Focus on {focus_area}: {custom_prompt}"
-        else:
-            prompt = f"Please provide detailed analysis focusing on: {focus_area}"
-        
+    # Initialize Claude Analysis Engine
+    self.claude_engine = ClaudeAnalysisEngine(config, db_manager)
+    
+    # Scheduler configuration
+    ai_config = config.get('ai', {})
+    scheduling_config = ai_config.get('scheduling', {})
+    
+    self.enabled = ai_config.get('enabled', True)
+    self.default_schedule = scheduling_config.get('default', '0 6 * * *')  # Daily at 6 AM
+    self.max_concurrent_analyses = scheduling_config.get('max_concurrent', 2)
+    
+    # Emergency triggers
+    emergency_config = scheduling_config.get('emergency_triggers', {})
+    self.emergency_triggers = self._setup_emergency_triggers(emergency_config)
+    
+    # Trigger management
+    self.triggers: Dict[str, AnalysisTrigger] = {}
+    self.execution_queue: List[str] = []  # List of trigger IDs to execute
+    self.running_analyses: Dict[str, asyncio.Task] = {}
+    
+    # Performance tracking
+    self.total_executions = 0
+    self.successful_executions = 0
+    self.failed_executions = 0
+    self.avg_execution_time = 0.0
+    
+    # Data collection callbacks
+    self.metric_collectors: Dict[str, Callable[[], Dict[str, Any]]] = {}
+    
+    # Setup default triggers
+    self._setup_default_triggers()
+    
+    # Scheduler state
+    self.running = False
+    self.scheduler_task = None
+    
+    logger.info("ai_analysis_scheduler_initialized",
+               enabled=self.enabled,
+               triggers=len(self.triggers),
+               emergency_triggers=len(self.emergency_triggers))
+
+def _setup_emergency_triggers(self, emergency_config: Dict[str, Any]) -> Dict[str, AnalysisTrigger]:
+    """Setup emergency analysis triggers"""
+    triggers = {}
+    
+    # Low success rate trigger
+    if 'low_success_rate' in emergency_config:
+        triggers['emergency_low_success_rate'] = AnalysisTrigger(
+            id='emergency_low_success_rate',
+            name='Emergency: Low Success Rate',
+            trigger_type=TriggerType.PERFORMANCE_THRESHOLD,
+            analysis_type=AnalysisType.EMERGENCY_ANALYSIS,
+            enabled=True,
+            threshold_value=emergency_config['low_success_rate'],
+            threshold_metric='success_rate',
+            cooldown_minutes=30,
+            priority='critical'
+        )
+    
+    # High drawdown trigger
+    if 'high_drawdown' in emergency_config:
+        triggers['emergency_high_drawdown'] = AnalysisTrigger(
+            id='emergency_high_drawdown',
+            name='Emergency: High Drawdown',
+            trigger_type=TriggerType.RISK_THRESHOLD,
+            analysis_type=AnalysisType.EMERGENCY_ANALYSIS,
+            enabled=True,
+            threshold_value=emergency_config['high_drawdown'],
+            threshold_metric='daily_pnl',
+            cooldown_minutes=15,
+            priority='critical'
+        )
+    
+    # High error rate trigger
+    if 'high_error_rate' in emergency_config:
+        triggers['emergency_high_error_rate'] = AnalysisTrigger(
+            id='emergency_high_error_rate',
+            name='Emergency: High Error Rate',
+            trigger_type=TriggerType.ERROR_THRESHOLD,
+            analysis_type=AnalysisType.ERROR_ANALYSIS,
+            enabled=True,
+            threshold_value=emergency_config['high_error_rate'],
+            threshold_metric='error_rate',
+            cooldown_minutes=30,
+            priority='critical'
+        )
+    
+    return triggers
+
+def _setup_default_triggers(self) -> None:
+    """Setup default analysis triggers"""
+    
+    # Daily performance analysis
+    self.add_trigger(AnalysisTrigger(
+        id='daily_performance',
+        name='Daily Performance Analysis',
+        trigger_type=TriggerType.SCHEDULED,
+        analysis_type=AnalysisType.PERFORMANCE_ANALYSIS,
+        enabled=True,
+        schedule=self.default_schedule,
+        cooldown_minutes=1440,  # Once per day
+        priority='medium'
+    ))
+    
+    # Daily summary
+    self.add_trigger(AnalysisTrigger(
+        id='daily_summary',
+        name='Daily Summary Report',
+        trigger_type=TriggerType.SCHEDULED,
+        analysis_type=AnalysisType.DAILY_SUMMARY,
+        enabled=True,
+        schedule='0 23 * * *',  # 11 PM daily
+        cooldown_minutes=1440,
+        priority='medium'
+    ))
+    
+    # Risk assessment (every 6 hours)
+    self.add_trigger(AnalysisTrigger(
+        id='risk_assessment',
+        name='Risk Assessment',
+        trigger_type=TriggerType.SCHEDULED,
+        analysis_type=AnalysisType.RISK_ASSESSMENT,
+        enabled=True,
+        schedule='0 */6 * * *',  # Every 6 hours
+        cooldown_minutes=360,
+        priority='high'
+    ))
+    
+    # Strategy optimization (weekly)
+    self.add_trigger(AnalysisTrigger(
+        id='strategy_optimization',
+        name='Weekly Strategy Optimization',
+        trigger_type=TriggerType.SCHEDULED,
+        analysis_type=AnalysisType.STRATEGY_OPTIMIZATION,
+        enabled=True,
+        schedule='0 2 * * 0',  # 2 AM every Sunday
+        cooldown_minutes=10080,  # Once per week
+        priority='medium'
+    ))
+    
+    # Add emergency triggers
+    for trigger in self.emergency_triggers.values():
+        self.add_trigger(trigger)
+
+def add_trigger(self, trigger: AnalysisTrigger) -> None:
+    """Add a new analysis trigger"""
+    self.triggers[trigger.id] = trigger
+    logger.info("analysis_trigger_added",
+               trigger_id=trigger.id,
+               name=trigger.name,
+               type=trigger.trigger_type.value)
+
+def remove_trigger(self, trigger_id: str) -> bool:
+    """Remove an analysis trigger"""
+    if trigger_id in self.triggers:
+        del self.triggers[trigger_id]
+        logger.info("analysis_trigger_removed", trigger_id=trigger_id)
+        return True
+    return False
+
+def register_metric_collector(self, name: str, collector_func: Callable[[], Dict[str, Any]]) -> None:
+    """Register a function that collects metrics for trigger evaluation"""
+    self.metric_collectors[name] = collector_func
+    logger.info("metric_collector_registered", name=name)
+
+async def start(self) -> None:
+    """Start the analysis scheduler"""
+    if self.running:
+        logger.warning("analysis_scheduler_already_running")
+        return
+    
+    if not self.enabled:
+        logger.info("analysis_scheduler_disabled")
+        return
+    
+    self.running = True
+    self.scheduler_task = asyncio.create_task(self._scheduler_loop())
+    logger.info("analysis_scheduler_started")
+
+async def stop(self) -> None:
+    """Stop the analysis scheduler"""
+    if not self.running:
+        return
+    
+    self.running = False
+    
+    # Cancel scheduler task
+    if self.scheduler_task:
+        self.scheduler_task.cancel()
         try:
-            result = await self.claude_engine.get_manual_analysis(prompt)
+            await self.scheduler_task
+        except asyncio.CancelledError:
+            pass
+    
+    # Cancel running analyses
+    for task in self.running_analyses.values():
+        task.cancel()
+    
+    if self.running_analyses:
+        await asyncio.gather(*self.running_analyses.values(), return_exceptions=True)
+    
+    self.running_analyses.clear()
+    logger.info("analysis_scheduler_stopped")
+
+async def _scheduler_loop(self) -> None:
+    """Main scheduler loop"""
+    while self.running:
+        try:
+            # Collect current metrics
+            current_metrics = await self._collect_metrics()
             
-            # Send result via notification
-            await self.notification_manager.send_notification(
-                f"🧠 Manual Analysis: {focus_area}",
-                result[:500] + "..." if len(result) > 500 else result,
-                NotificationLevel.INFO
-            )
+            # Check triggers
+            triggered_analyses = self._check_triggers(current_metrics)
             
-            return result
+            # Add to execution queue
+            for trigger_id in triggered_analyses:
+                if trigger_id not in self.execution_queue:
+                    self.execution_queue.append(trigger_id)
+            
+            # Execute queued analyses
+            await self._execute_queued_analyses()
+            
+            # Clean up completed analyses
+            self._cleanup_completed_analyses()
+            
+            # Sleep for 60 seconds before next check
+            await asyncio.sleep(60)
             
         except Exception as e:
-            logger.error("manual_analysis_failed", error=str(e))
-            return f"Analysis failed: {str(e)}"
+            logger.error("scheduler_loop_error", error=str(e))
+            await asyncio.sleep(60)  # Continue after error
+
+async def _collect_metrics(self) -> Dict[str, Any]:
+    """Collect metrics from registered collectors"""
+    metrics = {}
     
-    async def get_analysis_status(self) -> Dict[str, Any]:
-        """Get current analysis status and statistics"""
-        
-        success_rate = (self.successful_analyses / max(self.total_analyses, 1)) * 100
-        
-        return {
-            'is_running': self.is_running,
-            'total_analyses': self.total_analyses,
-            'successful_analyses': self.successful_analyses,
-            'success_rate': success_rate,
-            'recommendations_implemented': self.recommendations_implemented,
-            'last_analysis': self.last_analysis.isoformat() if self.last_analysis else None,
-            'queue_size': self.analysis_queue.qsize(),
-            'next_scheduled': self._get_next_scheduled_time(),
-            'emergency_triggers': self.performance_thresholds
-        }
-    
-    def _get_next_scheduled_time(self) -> Optional[str]:
-        """Get next scheduled analysis time"""
+    for name, collector in self.metric_collectors.items():
         try:
-            cron = croniter(self.default_schedule, datetime.now())
-            next_run = cron.get_next(datetime)
-            return next_run.isoformat()
-        except:
-            return None
+            collector_metrics = collector()
+            if isinstance(collector_metrics, dict):
+                metrics.update(collector_metrics)
+        except Exception as e:
+            logger.error("metric_collection_failed",
+                       collector=name,
+                       error=str(e))
     
-    async def update_schedule(self, new_schedule: str):
-        """Update analysis schedule"""
+    return metrics
+
+def _check_triggers(self, current_metrics: Dict[str, Any]) -> List[str]:
+    """Check all triggers and return list of triggered analysis IDs"""
+    triggered = []
+    
+    for trigger_id, trigger in self.triggers.items():
+        if not trigger.enabled:
+            continue
+        
+        try:
+            if trigger.should_trigger(current_metrics):
+                triggered.append(trigger_id)
+                trigger.last_triggered = time.time()
+                trigger.trigger_count += 1
+                
+                logger.info("analysis_trigger_fired",
+                           trigger_id=trigger_id,
+                           name=trigger.name,
+                           type=trigger.trigger_type.value,
+                           priority=trigger.priority)
+                
+        except Exception as e:
+            logger.error("trigger_check_failed",
+                       trigger_id=trigger_id,
+                       error=str(e))
+    
+    return triggered
+
+async def _execute_queued_analyses(self) -> None:
+    """Execute analyses from the queue"""
+    while (self.execution_queue and 
+           len(self.running_analyses) < self.max_concurrent_analyses):
+        
+        # Sort queue by priority
+        self.execution_queue.sort(key=lambda tid: self._get_trigger_priority_value(tid), reverse=True)
+        
+        trigger_id = self.execution_queue.pop(0)
+        
+        # Start analysis task
+        task = asyncio.create_task(self._execute_analysis(trigger_id))
+        self.running_analyses[trigger_id] = task
+
+def _get_trigger_priority_value(self, trigger_id: str) -> int:
+    """Get numeric priority value for sorting"""
+    priority_values = {'critical': 4, 'high': 3, 'medium': 2, 'low': 1}
+    trigger = self.triggers.get(trigger_id)
+    if trigger:
+        return priority_values.get(trigger.priority, 1)
+    return 1
+
+async def _execute_analysis(self, trigger_id: str) -> None:
+    """Execute a single analysis"""
+    trigger = self.triggers.get(trigger_id)
+    if not trigger:
+        logger.error("trigger_not_found", trigger_id=trigger_id)
+        return
+    
+    start_time = time.time()
+    self.total_executions += 1
+    
+    try:
+        logger.info("analysis_execution_started",
+                   trigger_id=trigger_id,
+                   analysis_type=trigger.analysis_type.value)
+        
+        # Collect data for analysis
+        analysis_context = await self._prepare_analysis_context(trigger)
+        
+        # Perform analysis
+        result = await self.claude_engine.analyze(analysis_context)
+        
+        # Handle result
+        await self._handle_analysis_result(trigger, result)
+        
+        execution_time = time.time() - start_time
+        self.successful_executions += 1
+        self._update_avg_execution_time(execution_time)
+        
+        logger.info("analysis_execution_completed",
+                   trigger_id=trigger_id,
+                   success=result.success,
+                   execution_time=execution_time,
+                   recommendations=len(result.recommendations))
+        
+    except Exception as e:
+        execution_time = time.time() - start_time
+        self.failed_executions += 1
+        
+        logger.error("analysis_execution_failed",
+                    trigger_id=trigger_id,
+                    error=str(e),
+                    execution_time=execution_time)
+
+async def _prepare_analysis_context(self, trigger: AnalysisTrigger) -> AnalysisContext:
+    """Prepare analysis context based on trigger type"""
+    # Collect comprehensive data
+    metrics = await self._collect_metrics()
+    
+    # Determine time range based on analysis type
+    time_ranges = {
+        AnalysisType.PERFORMANCE_ANALYSIS: "24h",
+        AnalysisType.RISK_ASSESSMENT: "current",
+        AnalysisType.STRATEGY_OPTIMIZATION: "7d",
+        AnalysisType.MARKET_ANALYSIS: "24h",
+        AnalysisType.ERROR_ANALYSIS: "24h",
+        AnalysisType.PORTFOLIO_OPTIMIZATION: "current",
+        AnalysisType.EMERGENCY_ANALYSIS: "1h",
+        AnalysisType.DAILY_SUMMARY: "24h"
+    }
+    
+    time_range = time_ranges.get(trigger.analysis_type, "24h")
+    
+    # Determine focus areas based on trigger
+    focus_areas = []
+    if trigger.trigger_type == TriggerType.PERFORMANCE_THRESHOLD:
+        focus_areas = ["performance_issues", "optimization_opportunities"]
+    elif trigger.trigger_type == TriggerType.RISK_THRESHOLD:
+        focus_areas = ["risk_mitigation", "portfolio_protection"]
+    elif trigger.trigger_type == TriggerType.ERROR_THRESHOLD:
+        focus_areas = ["error_analysis", "system_reliability"]
+    else:
+        focus_areas = ["general_optimization", "performance_monitoring"]
+    
+    return AnalysisContext(
+        analysis_type=trigger.analysis_type,
+        time_range=time_range,
+        focus_areas=focus_areas,
+        performance_data=metrics.get('performance', {}),
+        risk_metrics=metrics.get('risk', {}),
+        market_data=metrics.get('market', {}),
+        system_state=metrics.get('system', {}),
+        recent_events=metrics.get('events', [])
+    )
+
+async def _handle_analysis_result(self, trigger: AnalysisTrigger, result) -> None:
+    """Handle analysis result (notifications, storage, etc.)"""
+    try:
+        # Send notification if configured
+        if self.notification_manager and result.success:
+            priority_mapping = {
+                'critical': 'HIGH',
+                'high': 'HIGH', 
+                'medium': 'MEDIUM',
+                'low': 'LOW'
+            }
+            
+            await self.notification_manager.notify_ai_analysis(
+                analysis_type=trigger.analysis_type.value,
+                recommendations_count=len(result.recommendations),
+                summary=result.summary,
+                confidence=result.confidence_score,
+                priority=priority_mapping.get(trigger.priority, 'MEDIUM')
+            )
+        
+        # Store result in database if available
+        if self.db_manager:
+            await self._store_analysis_result(result)
+            
+    except Exception as e:
+        logger.error("analysis_result_handling_failed",
+                    trigger_id=trigger.id,
+                    error=str(e))
+
+async def _store_analysis_result(self, result) -> None:
+    """Store analysis result in database"""
+    # This would be implemented based on the database schema
+    # For now, just log that we would store it
+    logger.debug("analysis_result_stored",
+                analysis_id=result.analysis_id,
+                type=result.analysis_type.value)
+
+def _cleanup_completed_analyses(self) -> None:
+    """Clean up completed analysis tasks"""
+    completed = []
+    for trigger_id, task in self.running_analyses.items():
+        if task.done():
+            completed.append(trigger_id)
+    
+    for trigger_id in completed:
+        del self.running_analyses[trigger_id]
+
+def _update_avg_execution_time(self, execution_time: float) -> None:
+    """Update average execution time"""
+    if self.successful_executions == 1:
+        self.avg_execution_time = execution_time
+    else:
+        self.avg_execution_time = (
+            (self.avg_execution_time * (self.successful_executions - 1) + execution_time) 
+            / self.successful_executions
+        )
+
+# Manual trigger methods
+async def trigger_analysis(self, analysis_type: AnalysisType, 
+                         priority: str = "medium") -> str:
+    """Manually trigger an analysis"""
+    trigger_id = f"manual_{analysis_type.value}_{int(time.time())}"
+    
+    manual_trigger = AnalysisTrigger(
+        id=trigger_id,
+        name=f"Manual {analysis_type.value}",
+        trigger_type=TriggerType.MANUAL,
+        analysis_type=analysis_type,
+        enabled=True,
+        cooldown_minutes=0,  # No cooldown for manual triggers
+        priority=priority
+    )
+    
+    # Add to execution queue immediately
+    self.execution_queue.append(trigger_id)
+    self.triggers[trigger_id] = manual_trigger
+    
+    logger.info("manual_analysis_triggered",
+               trigger_id=trigger_id,
+               analysis_type=analysis_type.value,
+               priority=priority)
+    
+    return trigger_id
+
+async def emergency_trigger(self, reason: str, system_state: Dict[str, Any]) -> str:
+    """Trigger emergency analysis"""
+    return await self.trigger_analysis(AnalysisType.EMERGENCY_ANALYSIS, "critical")
+
+# Status and management
+def get_scheduler_status(self) -> Dict[str, Any]:
+    """Get scheduler status"""
+    success_rate = 0.0
+    if self.total_executions > 0:
+        success_rate = (self.successful_executions / self.total_executions) * 100
+    
+    return {
+        'enabled': self.enabled,
+        'running': self.running,
+        'total_triggers': len(self.triggers),
+        'enabled_triggers': len([t for t in self.triggers.values() if t.enabled]),
+        'queued_analyses': len(self.execution_queue),
+        'running_analyses': len(self.running_analyses),
+        'total_executions': self.total_executions,
+        'successful_executions': self.successful_executions,
+        'failed_executions': self.failed_executions,
+        'success_rate': success_rate,
+        'avg_execution_time': self.avg_execution_time,
+        'max_concurrent': self.max_concurrent_analyses
+    }
+
+def get_trigger_status(self) -> List[Dict[str, Any]]:
+    """Get status of all triggers"""
+    return [
+        {
+            'id': trigger.id,
+            'name': trigger.name,
+            'type': trigger.trigger_type.value,
+            'analysis_type': trigger.analysis_type.value,
+            'enabled': trigger.enabled,
+            'priority': trigger.priority,
+            'trigger_count': trigger.trigger_count,
+            'last_triggered': trigger.last_triggered,
+            'cooldown_minutes': trigger.cooldown_minutes,
+            'schedule': trigger.schedule,
+            'threshold_metric': trigger.threshold_metric,
+            'threshold_value': trigger.threshold_value
+        }
+        for trigger in self.triggers.values()
+    ]
+
+def enable_trigger(self, trigger_id: str) -> bool:
+    """Enable a trigger"""
+    if trigger_id in self.triggers:
+        self.triggers[trigger_id].enabled = True
+        logger.info("trigger_enabled", trigger_id=trigger_id)
+        return True
+    return False
+
+def disable_trigger(self, trigger_id: str) -> bool:
+    """Disable a trigger"""
+    if trigger_id in self.triggers:
+        self.triggers[trigger_id].enabled = False
+        logger.info("trigger_disabled", trigger_id=trigger_id)
+        return True
+    return False
+
+def update_trigger_schedule(self, trigger_id: str, new_schedule: str) -> bool:
+    """Update trigger schedule"""
+    if trigger_id in self.triggers:
         try:
             # Validate cron expression
             croniter(new_schedule)
-            
-            self.default_schedule = new_schedule
-            self.config.set('ai.scheduling.default', new_schedule)
-            
-            logger.info("analysis_schedule_updated", schedule=new_schedule)
-            
-            await self.notification_manager.send_notification(
-                "⏰ Analysis Schedule Updated",
-                f"New schedule: {new_schedule}",
-                NotificationLevel.INFO
-            )
-            
+            self.triggers[trigger_id].schedule = new_schedule
+            logger.info("trigger_schedule_updated",
+                       trigger_id=trigger_id,
+                       new_schedule=new_schedule)
+            return True
         except Exception as e:
-            logger.error("schedule_update_failed", error=str(e))
-            raise ValueError(f"Invalid cron expression: {new_schedule}")
-    
-    async def force_analysis(self, analysis_type: str = 'manual'):
-        """Force immediate analysis execution"""
-        await self.queue_analysis(analysis_type, priority='high')
-        
-        logger.info("forced_analysis_queued", type=analysis_type)
-        
-        await self.notification_manager.send_notification(
-            "🔄 Manual Analysis Triggered",
-            f"Analysis type: {analysis_type}",
-            NotificationLevel.INFO
-        )
+            logger.error("invalid_cron_expression",
+                       trigger_id=trigger_id,
+                       schedule=new_schedule,
+                       error=str(e))
+    return False
+```
