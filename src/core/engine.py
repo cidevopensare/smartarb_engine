@@ -1,24 +1,28 @@
-"""
+“””
 SmartArb Engine - Core Engine
-Main orchestrator for the arbitrage trading system
-"""
+Complete main orchestrator for the arbitrage trading system
+“””
 
 import asyncio
 import signal
 import sys
+import os
 from typing import Dict, List, Optional, Any
 from decimal import Decimal
 import structlog
 import yaml
 from pathlib import Path
+import psutil
+import time
 
 # Import our components
+
 from ..exchanges.base_exchange import BaseExchange
 from ..exchanges.kraken import KrakenExchange
 from ..exchanges.bybit import BybitExchange
 from ..exchanges.mexc import MEXCExchange
 from ..utils.config import ConfigManager
-from ..utils.logging import setup_logging
+from ..utils.logging import setup_logging, get_specialized_loggers
 from ..utils.notifications import NotificationManager
 from .strategy_manager import StrategyManager
 from .risk_manager import RiskManager
@@ -29,119 +33,193 @@ from ..ai.analysis_scheduler import AIAnalysisScheduler
 from ..ai.code_updater import CodeUpdateManager
 from ..ai.dashboard import AIDashboard
 
-logger = structlog.get_logger(__name__)
+logger = structlog.get_logger(**name**)
 
+class EngineStatus:
+“”“Engine status enumeration”””
+STOPPED = “stopped”
+INITIALIZING = “initializing”
+STARTING = “starting”
+RUNNING = “running”
+STOPPING = “stopping”
+ERROR = “error”
+EMERGENCY_STOP = “emergency_stop”
 
 class SmartArbEngine:
-    """
-    Main arbitrage engine orchestrator
+“””
+Main arbitrage engine orchestrator
+
+```
+Responsibilities:
+- Initialize and manage all components
+- Coordinate exchange connections
+- Monitor system health
+- Handle graceful shutdown
+- Manage AI analysis and optimization
+- Provide comprehensive status reporting
+"""
+
+def __init__(self, config_path: str = "config/settings.yaml"):
+    """Initialize SmartArb Engine"""
+    self.config_path = config_path
+    self.config = None
+    self.config_manager = None
     
-    Responsibilities:
-    - Initialize and manage all components
-    - Coordinate exchange connections
-    - Monitor system health
-    - Handle graceful shutdown
-    """
+    # Core components
+    self.exchanges: Dict[str, BaseExchange] = {}
+    self.strategy_manager = None
+    self.risk_manager = None
+    self.portfolio_manager = None
+    self.execution_engine = None
+    self.notification_manager = None
     
-    def __init__(self, config_path: str = "config/settings.yaml"):
-        """Initialize SmartArb Engine"""
-        self.config_path = config_path
-        self.config = None
-        self.exchanges: Dict[str, BaseExchange] = {}
-        self.strategy_manager = None
-        self.risk_manager = None
-        self.portfolio_manager = None
-        self.execution_engine = None
+    # AI System Components
+    self.claude_engine = None
+    self.ai_scheduler = None
+    self.code_updater = None
+    self.ai_dashboard = None
+    
+    # Specialized loggers
+    self.loggers = None
+    
+    # Engine state
+    self.status = EngineStatus.STOPPED
+    self.is_running = False
+    self.is_stopping = False
+    self.initialization_complete = False
+    
+    # Tasks
+    self.main_task = None
+    self.health_check_task = None
+    self.monitoring_task = None
+    
+    # Performance tracking
+    self.start_time = None
+    self.total_opportunities_found = 0
+    self.total_trades_executed = 0
+    self.total_profit = Decimal('0')
+    self.system_metrics = {}
+    
+    # Emergency stop flag
+    self.emergency_stop_triggered = False
+    
+    # Setup signal handlers for graceful shutdown
+    self._setup_signal_handlers()
+    
+def _setup_signal_handlers(self):
+    """Setup signal handlers for graceful shutdown"""
+    def signal_handler(signum, frame):
+        logger.warning("shutdown_signal_received", signal=signum)
+        asyncio.create_task(self.shutdown())
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    if hasattr(signal, 'SIGHUP'):
+        signal.signal(signal.SIGHUP, signal_handler)
+
+async def initialize(self) -> bool:
+    """Initialize all engine components"""
+    try:
+        self.status = EngineStatus.INITIALIZING
+        logger.info("smartarb_engine_initializing", config_path=self.config_path)
+        
+        # 1. Load configuration
+        if not await self._initialize_config():
+            return False
+        
+        # 2. Setup logging
+        await self._initialize_logging()
+        
+        # 3. Initialize notification manager
+        await self._initialize_notifications()
+        
+        # 4. Initialize exchanges
+        if not await self._initialize_exchanges():
+            return False
+        
+        # 5. Initialize core components
+        if not await self._initialize_core_components():
+            return False
+        
+        # 6. Initialize AI system
+        if not await self._initialize_ai_system():
+            return False
+        
+        # 7. Setup monitoring and health checks
+        await self._initialize_monitoring()
+        
+        # 8. Final validation
+        if not await self._validate_initialization():
+            return False
+        
+        self.initialization_complete = True
+        logger.info("smartarb_engine_initialized_successfully",
+                   exchanges=len(self.exchanges),
+                   ai_enabled=self.claude_engine is not None)
+        
+        return True
+        
+    except Exception as e:
+        self.status = EngineStatus.ERROR
+        logger.error("engine_initialization_failed", error=str(e))
+        await self.shutdown()
+        return False
+
+async def _initialize_config(self) -> bool:
+    """Initialize configuration manager"""
+    try:
+        self.config_manager = ConfigManager(self.config_path)
+        self.config = self.config_manager.get_config()
+        
+        logger.info("configuration_loaded",
+                   config_path=self.config_path,
+                   paper_trading=self.config.get('trading', {}).get('paper_trading', True))
+        return True
+        
+    except Exception as e:
+        logger.error("config_initialization_failed", error=str(e))
+        return False
+
+async def _initialize_logging(self) -> None:
+    """Initialize logging system"""
+    setup_logging(self.config)
+    self.loggers = get_specialized_loggers()
+    logger.info("logging_system_initialized")
+
+async def _initialize_notifications(self) -> None:
+    """Initialize notification manager"""
+    try:
+        self.notification_manager = NotificationManager(self.config)
+        
+        # Test notification system
+        test_results = await self.notification_manager.test_all_channels()
+        logger.info("notification_system_initialized",
+                   channels_tested=len(test_results),
+                   successful_channels=len([r for r in test_results.values() if r]))
+        
+    except Exception as e:
+        logger.error("notification_initialization_failed", error=str(e))
+        # Continue without notifications
         self.notification_manager = None
+
+async def _initialize_exchanges(self) -> bool:
+    """Initialize exchange connections"""
+    try:
+        exchange_configs = self.config_manager.get_exchange_configs()
         
-        # AI System Components
-        self.claude_engine = None
-        self.ai_scheduler = None
-        self.code_updater = None
-        self.ai_dashboard = None
+        if not exchange_configs:
+            logger.error("no_exchange_configurations_found")
+            return False
         
-        # Engine state
-        self.is_running = False
-        self.is_stopping = False
-        self.main_task = None
-        self.health_check_task = None
-        
-        # Performance tracking
-        self.start_time = None
-        self.total_opportunities_found = 0
-        self.total_trades_executed = 0
-        self.total_profit = Decimal('0')
-        
-        # Setup signal handlers for graceful shutdown
-        self._setup_signal_handlers()
-        
-    def _setup_signal_handlers(self):
-        """Setup signal handlers for graceful shutdown"""
-        def signal_handler(signum, frame):
-            logger.info("shutdown_signal_received", signal=signum)
-            asyncio.create_task(self.stop())
-        
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
-    
-    async def initialize(self):
-        """Initialize all engine components"""
-        logger.info("smartarb_engine_initializing")
-        
-        try:
-            # Load configuration
-            self.config = ConfigManager(self.config_path)
-            
-            # Setup logging
-            setup_logging(self.config.get('logging', {}))
-            
-            # Initialize notification system
-            self.notification_manager = NotificationManager(
-                self.config.get('monitoring', {})
-            )
-            
-            # Initialize exchanges
-            await self._initialize_exchanges()
-            
-            # Initialize core components
-            self.risk_manager = RiskManager(self.config.get('risk_management', {}))
-            self.portfolio_manager = PortfolioManager(self.exchanges, self.config)
-            self.execution_engine = ExecutionEngine(
-                self.exchanges, 
-                self.risk_manager,
-                self.config.get('trading', {})
-            )
-            self.strategy_manager = StrategyManager(
-                self.exchanges,
-                self.risk_manager,
-                self.execution_engine,
-                self.config.get('strategies', {})
-            )
-            
-            # Initialize AI system if enabled
-            if self.config.get('ai', {}).get('enabled', False):
-                await self._initialize_ai_system()
-            
-            logger.info("smartarb_engine_initialized", 
-                       exchanges=list(self.exchanges.keys()),
-                       strategies=self.strategy_manager.enabled_strategies,
-                       ai_enabled=bool(self.claude_engine))
-            
-        except Exception as e:
-            logger.error("initialization_failed", error=str(e))
-            raise
-    
-    async def _initialize_exchanges(self):
-        """Initialize exchange connections"""
-        exchange_configs = self.config.get('exchanges', {})
-        
-        # Exchange factory
+        # Exchange class mapping
         exchange_classes = {
             'kraken': KrakenExchange,
             'bybit': BybitExchange,
             'mexc': MEXCExchange
         }
         
+        connection_tasks = []
         for exchange_name, exchange_config in exchange_configs.items():
             if not exchange_config.get('enabled', False):
                 logger.info("exchange_disabled", exchange=exchange_name)
@@ -151,341 +229,831 @@ class SmartArbEngine:
                 logger.warning("unknown_exchange", exchange=exchange_name)
                 continue
             
-            try:
-                # Create exchange instance
-                exchange_class = exchange_classes[exchange_name]
-                exchange = exchange_class(exchange_config)
-                
-                # Test connection
-                if await exchange.connect():
-                    self.exchanges[exchange_name] = exchange
-                    logger.info("exchange_connected", exchange=exchange_name)
-                else:
-                    logger.error("exchange_connection_failed", exchange=exchange_name)
-                    
-            except Exception as e:
-                logger.error("exchange_initialization_failed", 
-                           exchange=exchange_name, error=str(e))
+            # Create exchange instance
+            exchange_class = exchange_classes[exchange_name]
+            exchange = exchange_class(exchange_config)
+            
+            # Add to exchanges dict
+            self.exchanges[exchange_name] = exchange
+            
+            # Create connection task
+            task = asyncio.create_task(self._connect_exchange(exchange_name, exchange))
+            connection_tasks.append(task)
         
-        if not self.exchanges:
-            raise RuntimeError("No exchanges could be initialized")
+        # Wait for all connections
+        connection_results = await asyncio.gather(*connection_tasks, return_exceptions=True)
         
-        logger.info("exchanges_initialized", count=len(self.exchanges))
-    
-    async def _initialize_ai_system(self):
-        """Initialize AI analysis system"""
-        try:
-            logger.info("initializing_ai_system")
+        # Check results
+        connected_exchanges = 0
+        for i, result in enumerate(connection_results):
+            if isinstance(result, Exception):
+                logger.error("exchange_connection_exception", error=str(result))
+            elif result:
+                connected_exchanges += 1
+        
+        if connected_exchanges < 2:
+            logger.error("insufficient_exchanges_connected", 
+                       connected=connected_exchanges,
+                       required=2)
+            return False
+        
+        logger.info("exchanges_initialized", 
+                   total=len(self.exchanges),
+                   connected=connected_exchanges)
+        return True
+        
+    except Exception as e:
+        logger.error("exchange_initialization_failed", error=str(e))
+        return False
+
+async def _connect_exchange(self, exchange_name: str, exchange: BaseExchange) -> bool:
+    """Connect to a single exchange"""
+    try:
+        logger.info("connecting_to_exchange", exchange=exchange_name)
+        
+        if await exchange.connect():
+            logger.info("exchange_connected", exchange=exchange_name)
+            return True
+        else:
+            logger.error("exchange_connection_failed", exchange=exchange_name)
+            return False
             
-            # Initialize Claude Analysis Engine
-            self.claude_engine = ClaudeAnalysisEngine(
-                self.config, 
-                self.db_manager if hasattr(self, 'db_manager') else None
-            )
-            
-            # Initialize Code Update Manager
-            self.code_updater = CodeUpdateManager(self.notification_manager)
-            
-            # Initialize AI Analysis Scheduler
-            self.ai_scheduler = AIAnalysisScheduler(
-                self.config,
-                self.db_manager if hasattr(self, 'db_manager') else None,
-                self.notification_manager
-            )
-            
-            # Initialize AI Dashboard
-            self.ai_dashboard = AIDashboard(
-                self.claude_engine,
-                self.ai_scheduler,
-                self.code_updater,
-                self.notification_manager
-            )
-            
-            # Start AI scheduler
-            await self.ai_scheduler.start()
-            
-            logger.info("ai_system_initialized")
-            
-            # Send AI startup notification
-            await self.notification_manager.send_notification(
-                "🧠 AI System Activated",
-                "SmartArb Engine now includes Claude AI analysis and optimization",
-                NotificationManager.NotificationLevel.INFO
-            )
-            
-        except Exception as e:
-            logger.error("ai_system_initialization_failed", error=str(e))
-            # AI system is optional, continue without it
+    except Exception as e:
+        logger.error("exchange_connection_exception", 
+                    exchange=exchange_name, 
+                    error=str(e))
+        return False
+
+async def _initialize_core_components(self) -> bool:
+    """Initialize core trading components"""
+    try:
+        # Initialize risk manager
+        self.risk_manager = RiskManager(self.exchanges, self.config)
+        logger.info("risk_manager_initialized")
+        
+        # Initialize portfolio manager
+        self.portfolio_manager = PortfolioManager(self.exchanges, self.config)
+        logger.info("portfolio_manager_initialized")
+        
+        # Initialize execution engine
+        self.execution_engine = ExecutionEngine(
+            self.exchanges, 
+            self.risk_manager, 
+            self.config
+        )
+        logger.info("execution_engine_initialized")
+        
+        # Initialize strategy manager
+        self.strategy_manager = StrategyManager(
+            self.exchanges,
+            self.risk_manager,
+            self.execution_engine,
+            self.config
+        )
+        logger.info("strategy_manager_initialized")
+        
+        return True
+        
+    except Exception as e:
+        logger.error("core_components_initialization_failed", error=str(e))
+        return False
+
+async def _initialize_ai_system(self) -> bool:
+    """Initialize AI analysis system"""
+    try:
+        ai_config = self.config.get('ai', {})
+        
+        if not ai_config.get('enabled', True):
+            logger.info("ai_system_disabled")
+            return True
+        
+        logger.info("initializing_ai_system")
+        
+        # Initialize Claude Analysis Engine
+        self.claude_engine = ClaudeAnalysisEngine(self.config, None)
+        
+        # Test Claude connection
+        test_result = await self.claude_engine.test_connection()
+        if not test_result['success']:
+            logger.warning("claude_connection_test_failed", 
+                         error=test_result.get('error'))
+            # Continue without AI if connection fails
             self.claude_engine = None
-            self.ai_scheduler = None
-            self.code_updater = None
-            self.ai_dashboard = None
-    
-    async def start(self):
-        """Start the arbitrage engine"""
-        if self.is_running:
-            logger.warning("engine_already_running")
-            return
+            return True
         
+        # Initialize Code Update Manager
+        self.code_updater = CodeUpdateManager(self.notification_manager, self.config)
+        
+        # Initialize AI Analysis Scheduler
+        self.ai_scheduler = AIAnalysisScheduler(
+            self.config,
+            None,  # db_manager
+            self.notification_manager
+        )
+        
+        # Register metric collectors
+        self._register_ai_metric_collectors()
+        
+        # Initialize AI Dashboard
+        self.ai_dashboard = AIDashboard(
+            self.claude_engine,
+            self.ai_scheduler,
+            self.code_updater,
+            self.config
+        )
+        
+        logger.info("ai_system_initialized_successfully")
+        return True
+        
+    except Exception as e:
+        logger.error("ai_system_initialization_failed", error=str(e))
+        # Continue without AI system
+        self.claude_engine = None
+        self.ai_scheduler = None
+        self.code_updater = None
+        self.ai_dashboard = None
+        return True
+
+def _register_ai_metric_collectors(self) -> None:
+    """Register metric collectors for AI analysis"""
+    if not self.ai_scheduler:
+        return
+    
+    # Performance metrics collector
+    def collect_performance_metrics():
+        return {
+            'total_opportunities': self.total_opportunities_found,
+            'total_trades': self.total_trades_executed,
+            'total_profit': float(self.total_profit),
+            'success_rate': self._calculate_success_rate(),
+            'uptime_hours': self._get_uptime_hours()
+        }
+    
+    # Risk metrics collector
+    def collect_risk_metrics():
+        if self.risk_manager:
+            return self.risk_manager.get_risk_status()
+        return {}
+    
+    # System metrics collector
+    def collect_system_metrics():
+        return self._get_system_metrics()
+    
+    # Portfolio metrics collector
+    def collect_portfolio_metrics():
+        if self.portfolio_manager:
+            return asyncio.create_task(self._get_portfolio_metrics())
+        return {}
+    
+    # Register collectors
+    self.ai_scheduler.register_metric_collector('performance', collect_performance_metrics)
+    self.ai_scheduler.register_metric_collector('risk', collect_risk_metrics)
+    self.ai_scheduler.register_metric_collector('system', collect_system_metrics)
+    
+    logger.info("ai_metric_collectors_registered", collectors=3)
+
+async def _get_portfolio_metrics(self) -> Dict[str, Any]:
+    """Get portfolio metrics asynchronously"""
+    try:
+        if self.portfolio_manager:
+            summary = await self.portfolio_manager.get_portfolio_summary()
+            return summary
+        return {}
+    except Exception as e:
+        logger.warning("portfolio_metrics_collection_failed", error=str(e))
+        return {}
+
+async def _initialize_monitoring(self) -> None:
+    """Initialize monitoring and health check systems"""
+    try:
+        # Start health check task
+        self.health_check_task = asyncio.create_task(self._health_check_loop())
+        
+        # Start system monitoring task
+        self.monitoring_task = asyncio.create_task(self._monitoring_loop())
+        
+        logger.info("monitoring_systems_initialized")
+        
+    except Exception as e:
+        logger.error("monitoring_initialization_failed", error=str(e))
+
+async def _validate_initialization(self) -> bool:
+    """Validate that all critical components are initialized"""
+    
+    validation_checks = [
+        ("config", self.config is not None),
+        ("exchanges", len(self.exchanges) >= 2),
+        ("risk_manager", self.risk_manager is not None),
+        ("portfolio_manager", self.portfolio_manager is not None),
+        ("execution_engine", self.execution_engine is not None),
+        ("strategy_manager", self.strategy_manager is not None)
+    ]
+    
+    failed_checks = []
+    for check_name, check_result in validation_checks:
+        if not check_result:
+            failed_checks.append(check_name)
+    
+    if failed_checks:
+        logger.error("initialization_validation_failed", 
+                    failed_components=failed_checks)
+        return False
+    
+    # Check exchange connections
+    connected_exchanges = [
+        name for name, exchange in self.exchanges.items() 
+        if exchange.is_connected
+    ]
+    
+    if len(connected_exchanges) < 2:
+        logger.error("insufficient_connected_exchanges",
+                    connected=len(connected_exchanges),
+                    required=2)
+        return False
+    
+    logger.info("initialization_validation_passed",
+               connected_exchanges=connected_exchanges)
+    return True
+
+async def start(self) -> bool:
+    """Start the SmartArb Engine"""
+    try:
+        if not self.initialization_complete:
+            if not await self.initialize():
+                return False
+        
+        self.status = EngineStatus.STARTING
         logger.info("smartarb_engine_starting")
         
-        try:
-            # Initialize if not done already
-            if not self.config:
-                await self.initialize()
-            
-            self.is_running = True
-            self.start_time = asyncio.get_event_loop().time()
-            
-            # Send startup notification
+        # Start AI scheduler if available
+        if self.ai_scheduler:
+            await self.ai_scheduler.start()
+            logger.info("ai_scheduler_started")
+        
+        # Start portfolio manager updates
+        if self.portfolio_manager:
+            # Portfolio manager will be updated in the main loop
+            pass
+        
+        # Start main trading loop
+        self.main_task = asyncio.create_task(self._main_trading_loop())
+        
+        # Set engine state
+        self.is_running = True
+        self.start_time = time.time()
+        self.status = EngineStatus.RUNNING
+        
+        # Send startup notification
+        if self.notification_manager:
             await self.notification_manager.send_notification(
-                "🚀 SmartArb Engine Started",
-                f"Engine started with {len(self.exchanges)} exchanges: {', '.join(self.exchanges.keys())}"
+                title="SmartArb Engine Started",
+                message=f"Engine started successfully with {len(self.exchanges)} exchanges",
+                notification_type=self.notification_manager.NotificationType.SUCCESS,
+                priority=self.notification_manager.NotificationPriority.HIGH
             )
+        
+        logger.info("smartarb_engine_started_successfully",
+                   exchanges=len(self.exchanges),
+                   ai_enabled=self.ai_scheduler is not None)
+        
+        return True
+        
+    except Exception as e:
+        self.status = EngineStatus.ERROR
+        logger.error("engine_start_failed", error=str(e))
+        await self.shutdown()
+        return False
+
+async def _main_trading_loop(self) -> None:
+    """Main trading loop"""
+    logger.info("main_trading_loop_started")
+    
+    loop_count = 0
+    last_portfolio_update = 0
+    
+    while self.is_running and not self.is_stopping:
+        try:
+            loop_start_time = time.time()
+            loop_count += 1
             
-            # Start main engine loop
-            self.main_task = asyncio.create_task(self._main_loop())
+            # Update portfolio (every 30 seconds)
+            if time.time() - last_portfolio_update > 30:
+                if self.portfolio_manager:
+                    await self.portfolio_manager.update_portfolio()
+                last_portfolio_update = time.time()
             
-            # Start health monitoring
-            self.health_check_task = asyncio.create_task(self._health_check_loop())
+            # Scan for opportunities
+            await self._scan_and_execute_opportunities()
             
-            # Start AI dashboard monitoring if available
-            if self.ai_dashboard:
-                self.ai_dashboard_task = asyncio.create_task(self.ai_dashboard.start_monitoring())
+            # Update system metrics
+            self._update_system_metrics()
             
-            # Wait for tasks to complete
-            tasks = [self.main_task, self.health_check_task]
-            if hasattr(self, 'ai_dashboard_task'):
-                tasks.append(self.ai_dashboard_task)
+            # Log periodic status (every 100 loops)
+            if loop_count % 100 == 0:
+                await self._log_periodic_status()
             
-            await asyncio.gather(*tasks)
+            # Calculate sleep time to maintain consistent loop timing
+            loop_duration = time.time() - loop_start_time
+            target_loop_time = 5.0  # 5 seconds per loop
+            sleep_time = max(0.1, target_loop_time - loop_duration)
+            
+            await asyncio.sleep(sleep_time)
             
         except Exception as e:
-            logger.error("engine_start_failed", error=str(e))
-            await self.stop()
-            raise
+            logger.error("main_trading_loop_error", error=str(e), loop_count=loop_count)
+            await asyncio.sleep(5)  # Short delay before retrying
     
-    async def stop(self):
-        """Stop the arbitrage engine gracefully"""
-        if self.is_stopping:
+    logger.info("main_trading_loop_ended", total_loops=loop_count)
+
+async def _scan_and_execute_opportunities(self) -> None:
+    """Scan for and execute trading opportunities"""
+    try:
+        if not self.strategy_manager:
             return
-            
-        logger.info("smartarb_engine_stopping")
-        self.is_stopping = True
-        self.is_running = False
         
-        try:
-            # Cancel main tasks
-            if self.main_task and not self.main_task.done():
-                self.main_task.cancel()
-                try:
-                    await self.main_task
-                except asyncio.CancelledError:
-                    pass
-            
-            if self.health_check_task and not self.health_check_task.done():
-                self.health_check_task.cancel()
-                try:
-                    await self.health_check_task
-                except asyncio.CancelledError:
-                    pass
-            
-            # Stop AI system
-            if self.ai_scheduler:
-                await self.ai_scheduler.stop()
-            
-            if hasattr(self, 'ai_dashboard_task') and not self.ai_dashboard_task.done():
-                self.ai_dashboard_task.cancel()
-                try:
-                    await self.ai_dashboard_task
-                except asyncio.CancelledError:
-                    pass
-            
-            # Stop strategy manager
-            if self.strategy_manager:
-                await self.strategy_manager.stop()
-            
-            # Close exchange connections
-            for exchange_name, exchange in self.exchanges.items():
-                try:
-                    await exchange.disconnect()
-                    logger.info("exchange_disconnected", exchange=exchange_name)
-                except Exception as e:
-                    logger.warning("exchange_disconnect_failed", 
-                                 exchange=exchange_name, error=str(e))
-            
-            # Send shutdown notification
-            runtime = asyncio.get_event_loop().time() - (self.start_time or 0)
-            await self.notification_manager.send_notification(
-                "🛑 SmartArb Engine Stopped",
-                f"Engine stopped after {runtime:.1f}s. "
-                f"Opportunities: {self.total_opportunities_found}, "
-                f"Trades: {self.total_trades_executed}, "
-                f"Profit: {self.total_profit} USDT"
-            )
-            
-            logger.info("smartarb_engine_stopped",
-                       runtime=runtime,
-                       opportunities=self.total_opportunities_found,
-                       trades=self.total_trades_executed,
-                       profit=float(self.total_profit))
-            
-        except Exception as e:
-            logger.error("engine_stop_failed", error=str(e))
-    
-    async def _main_loop(self):
-        """Main engine loop - orchestrates all activities"""
-        update_interval = self.config.get('engine', {}).get('update_interval', 5)
+        # Scan for opportunities
+        opportunities = await self.strategy_manager.scan_markets()
         
-        logger.info("main_loop_started", update_interval=update_interval)
-        
-        while self.is_running:
-            try:
-                # Update portfolio balances
-                await self.portfolio_manager.update_balances()
-                
-                # Scan for arbitrage opportunities
-                opportunities = await self.strategy_manager.scan_opportunities()
-                
-                if opportunities:
-                    self.total_opportunities_found += len(opportunities)
-                    logger.info("opportunities_found", count=len(opportunities))
-                    
-                    # Execute opportunities (if risk management allows)
-                    for opportunity in opportunities:
-                        if await self.risk_manager.validate_opportunity(opportunity):
-                            result = await self.execution_engine.execute_opportunity(opportunity)
-                            
-                            if result and result.get('success'):
-                                self.total_trades_executed += 1
-                                profit = result.get('profit', Decimal('0'))
-                                self.total_profit += profit
-                                
-                                logger.info("opportunity_executed",
-                                          symbol=opportunity.symbol,
-                                          profit=float(profit))
-                                
-                                # Send profitable trade notification
-                                if profit > Decimal('0'):
-                                    await self.notification_manager.send_notification(
-                                        f"💰 Profitable Trade: {opportunity.symbol}",
-                                        f"Profit: {profit} USDT"
-                                    )
-                
-                # Wait before next iteration
-                await asyncio.sleep(update_interval)
-                
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error("main_loop_error", error=str(e))
-                await asyncio.sleep(update_interval)
-        
-        logger.info("main_loop_stopped")
-    
-    async def _health_check_loop(self):
-        """Monitor system health and exchange connectivity"""
-        check_interval = self.config.get('monitoring', {}).get('health_check', {}).get('interval', 60)
-        
-        logger.info("health_check_started", interval=check_interval)
-        
-        while self.is_running:
-            try:
-                # Check exchange connections
-                for exchange_name, exchange in self.exchanges.items():
-                    if not exchange.is_connected:
-                        logger.warning("exchange_disconnected", exchange=exchange_name)
-                        
-                        # Attempt reconnection
-                        try:
-                            if await exchange.connect():
-                                logger.info("exchange_reconnected", exchange=exchange_name)
-                            else:
-                                logger.error("exchange_reconnection_failed", exchange=exchange_name)
-                        except Exception as e:
-                            logger.error("exchange_reconnection_error", 
-                                       exchange=exchange_name, error=str(e))
-                
-                # Check risk manager status
-                risk_status = self.risk_manager.get_status()
-                if risk_status.get('emergency_stop'):
-                    logger.critical("emergency_stop_activated")
-                    await self.notification_manager.send_notification(
-                        "🚨 Emergency Stop Activated",
-                        "Trading has been halted due to risk management rules"
-                    )
-                    await self.stop()
+        if opportunities:
+            self.total_opportunities_found += len(opportunities)
+            
+            logger.info("opportunities_detected",
+                       count=len(opportunities),
+                       total_found=self.total_opportunities_found)
+            
+            # Execute opportunities
+            for opportunity in opportunities:
+                if self.is_stopping:
                     break
                 
-                # Log system status
-                await self._log_system_status()
+                try:
+                    # Execute opportunity
+                    result = await self.strategy_manager.execute_opportunity(opportunity)
+                    
+                    if result and result.get('success', False):
+                        self.total_trades_executed += 1
+                        profit = result.get('profit', 0)
+                        if profit:
+                            self.total_profit += Decimal(str(profit))
+                        
+                        # Log successful trade
+                        if self.loggers and 'trade' in self.loggers:
+                            self.loggers['trade'].log_trade_execution_complete(
+                                opportunity.opportunity_id,
+                                float(profit),
+                                symbol=opportunity.symbol
+                            )
                 
-                await asyncio.sleep(check_interval)
-                
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error("health_check_error", error=str(e))
-                await asyncio.sleep(check_interval)
-        
-        logger.info("health_check_stopped")
+                except Exception as e:
+                    logger.error("opportunity_execution_failed",
+                               opportunity_id=opportunity.opportunity_id,
+                               error=str(e))
     
-    async def _log_system_status(self):
-        """Log current system status"""
-        connected_exchanges = [name for name, ex in self.exchanges.items() if ex.is_connected]
-        
-        status = {
-            'running_time': asyncio.get_event_loop().time() - (self.start_time or 0),
-            'connected_exchanges': connected_exchanges,
-            'opportunities_found': self.total_opportunities_found,
-            'trades_executed': self.total_trades_executed,
-            'total_profit': float(self.total_profit),
-            'risk_status': self.risk_manager.get_status(),
-            'portfolio_value': float(await self.portfolio_manager.get_total_value()) if self.portfolio_manager else 0
+    except Exception as e:
+        logger.error("opportunity_scanning_failed", error=str(e))
+
+async def _health_check_loop(self) -> None:
+    """Health check loop"""
+    logger.info("health_check_loop_started")
+    
+    while self.is_running and not self.is_stopping:
+        try:
+            await self._perform_health_checks()
+            await asyncio.sleep(30)  # Health check every 30 seconds
+            
+        except Exception as e:
+            logger.error("health_check_loop_error", error=str(e))
+            await asyncio.sleep(30)
+    
+    logger.info("health_check_loop_ended")
+
+async def _perform_health_checks(self) -> None:
+    """Perform comprehensive health checks"""
+    try:
+        health_status = {
+            'timestamp': time.time(),
+            'overall_status': 'healthy',
+            'exchanges': {},
+            'components': {},
+            'system': {}
         }
         
-        logger.info("system_status", **status)
-    
-    @property
-    def status(self) -> Dict[str, Any]:
-        """Get current engine status"""
-        base_status = {
-            'running': self.is_running,
-            'stopping': self.is_stopping,
-            'exchanges': {name: ex.status for name, ex in self.exchanges.items()},
-            'opportunities_found': self.total_opportunities_found,
-            'trades_executed': self.total_trades_executed,
-            'total_profit': float(self.total_profit),
-            'start_time': self.start_time
-        }
-        
-        # Add AI system status if available
-        if self.ai_dashboard:
+        # Check exchange health
+        for name, exchange in self.exchanges.items():
             try:
-                ai_status = self.ai_dashboard.get_real_time_stats()
-                base_status['ai_system'] = ai_status
+                is_healthy = await exchange.health_check()
+                health_status['exchanges'][name] = {
+                    'connected': exchange.is_connected,
+                    'healthy': is_healthy,
+                    'total_requests': exchange.total_requests,
+                    'failed_requests': exchange.failed_requests
+                }
+                
+                if not is_healthy:
+                    health_status['overall_status'] = 'degraded'
+                    
             except Exception as e:
-                logger.warning("ai_status_retrieval_failed", error=str(e))
-                base_status['ai_system'] = {'error': str(e)}
+                health_status['exchanges'][name] = {
+                    'connected': False,
+                    'healthy': False,
+                    'error': str(e)
+                }
+                health_status['overall_status'] = 'degraded'
         
-        return base_status
+        # Check component health
+        components = {
+            'risk_manager': self.risk_manager,
+            'portfolio_manager': self.portfolio_manager,
+            'execution_engine': self.execution_engine,
+            'strategy_manager': self.strategy_manager
+        }
+        
+        for name, component in components.items():
+            health_status['components'][name] = {
+                'initialized': component is not None,
+                'status': 'healthy' if component else 'missing'
+            }
+        
+        # Check system health
+        health_status['system'] = self._get_system_health()
+        
+        # Store health status
+        self.system_metrics['health'] = health_status
+        
+        # Check for critical issues
+        if health_status['overall_status'] == 'critical':
+            await self._handle_critical_health_issue(health_status)
+        
+    except Exception as e:
+        logger.error("health_check_failed", error=str(e))
 
+def _get_system_health(self) -> Dict[str, Any]:
+    """Get system health metrics"""
+    try:
+        process = psutil.Process()
+        
+        return {
+            'cpu_percent': process.cpu_percent(),
+            'memory_percent': process.memory_percent(),
+            'memory_mb': process.memory_info().rss / 1024 / 1024,
+            'num_threads': process.num_threads(),
+            'disk_usage': psutil.disk_usage('/').percent if os.name != 'nt' else 0,
+            'uptime_seconds': time.time() - self.start_time if self.start_time else 0
+        }
+    except Exception as e:
+        logger.warning("system_health_check_failed", error=str(e))
+        return {'error': str(e)}
 
-async def main():
-    """Main entry point for SmartArb Engine"""
-    engine = SmartArbEngine()
+async def _handle_critical_health_issue(self, health_status: Dict[str, Any]) -> None:
+    """Handle critical health issues"""
+    logger.critical("critical_health_issue_detected", health_status=health_status)
+    
+    # Trigger emergency analysis if AI is available
+    if self.ai_scheduler:
+        try:
+            await self.ai_scheduler.emergency_trigger(
+                reason="Critical health issue detected",
+                system_state=health_status
+            )
+        except Exception as e:
+            logger.error("emergency_ai_analysis_failed", error=str(e))
+    
+    # Send critical notification
+    if self.notification_manager:
+        await self.notification_manager.notify_emergency(
+            title="Critical System Health Issue",
+            message="SmartArb Engine detected critical health issues",
+            health_status=health_status
+        )
+
+async def _monitoring_loop(self) -> None:
+    """System monitoring loop"""
+    logger.info("monitoring_loop_started")
+    
+    while self.is_running and not self.is_stopping:
+        try:
+            await self._collect_monitoring_metrics()
+            await asyncio.sleep(60)  # Monitor every minute
+            
+        except Exception as e:
+            logger.error("monitoring_loop_error", error=str(e))
+            await asyncio.sleep(60)
+    
+    logger.info("monitoring_loop_ended")
+
+async def _collect_monitoring_metrics(self) -> None:
+    """Collect comprehensive monitoring metrics"""
+    try:
+        metrics = {
+            'timestamp': time.time(),
+            'uptime': self._get_uptime_hours(),
+            'performance': {
+                'opportunities_found': self.total_opportunities_found,
+                'trades_executed': self.total_trades_executed,
+                'total_profit': float(self.total_profit),
+                'success_rate': self._calculate_success_rate()
+            },
+            'system': self._get_system_health()
+        }
+        
+        # Add component-specific metrics
+        if self.risk_manager:
+            metrics['risk'] = self.risk_manager.get_risk_status()
+        
+        if self.execution_engine:
+            metrics['execution'] = self.execution_engine.get_execution_status()
+        
+        if self.strategy_manager:
+            metrics['strategies'] = await self.strategy_manager.get_strategy_stats()
+        
+        # Store metrics
+        self.system_metrics['monitoring'] = metrics
+        
+    except Exception as e:
+        logger.error("monitoring_metrics_collection_failed", error=str(e))
+
+async def _log_periodic_status(self) -> None:
+    """Log periodic status update"""
+    try:
+        status = await self.get_engine_status()
+        
+        logger.info("periodic_status_update",
+                   status=status['status'],
+                   uptime_hours=status['uptime_hours'],
+                   opportunities_found=status['performance']['opportunities_found'],
+                   trades_executed=status['performance']['trades_executed'],
+                   total_profit=status['performance']['total_profit'],
+                   connected_exchanges=len([e for e in status['exchanges'].values() if e['connected']]))
+        
+    except Exception as e:
+        logger.error("periodic_status_logging_failed", error=str(e))
+
+def _calculate_success_rate(self) -> float:
+    """Calculate trading success rate"""
+    if self.total_opportunities_found == 0:
+        return 0.0
+    return (self.total_trades_executed / self.total_opportunities_found) * 100
+
+def _get_uptime_hours(self) -> float:
+    """Get engine uptime in hours"""
+    if self.start_time:
+        return (time.time() - self.start_time) / 3600
+    return 0.0
+
+def _update_system_metrics(self) -> None:
+    """Update system metrics"""
+    try:
+        self.system_metrics.update({
+            'last_update': time.time(),
+            'uptime_hours': self._get_uptime_hours(),
+            'opportunities_found': self.total_opportunities_found,
+            'trades_executed': self.total_trades_executed,
+            'total_profit': float(self.total_profit),
+            'success_rate': self._calculate_success_rate()
+        })
+    except Exception as e:
+        logger.warning("system_metrics_update_failed", error=str(e))
+
+async def emergency_stop(self) -> None:
+    """Emergency stop all operations"""
+    logger.critical("emergency_stop_triggered")
+    
+    self.emergency_stop_triggered = True
+    self.status = EngineStatus.EMERGENCY_STOP
     
     try:
-        await engine.start()
-    except KeyboardInterrupt:
-        logger.info("keyboard_interrupt_received")
+        # Cancel all open orders
+        for exchange in self.exchanges.values():
+            if exchange.is_connected:
+                await exchange.emergency_cancel_all()
+        
+        # Stop execution engine
+        if self.execution_engine:
+            await self.execution_engine.emergency_stop_all()
+        
+        # Send emergency notification
+        if self.notification_manager:
+            await self.notification_manager.notify_emergency(
+                title="EMERGENCY STOP ACTIVATED",
+                message="SmartArb Engine emergency stop has been triggered"
+            )
+        
+        logger.critical("emergency_stop_completed")
+        
     except Exception as e:
-        logger.error("engine_failed", error=str(e))
-        sys.exit(1)
-    finally:
-        await engine.stop()
+        logger.critical("emergency_stop_failed", error=str(e))
+    
+    # Proceed with normal shutdown
+    await self.shutdown()
 
+async def shutdown(self) -> None:
+    """Graceful shutdown of the engine"""
+    if self.is_stopping:
+        return
+    
+    self.is_stopping = True
+    self.status = EngineStatus.STOPPING
+    
+    logger.info("smartarb_engine_shutting_down")
+    
+    try:
+        # Stop AI scheduler
+        if self.ai_scheduler:
+            await self.ai_scheduler.stop()
+            logger.info("ai_scheduler_stopped")
+        
+        # Cancel all tasks
+        tasks_to_cancel = []
+        if self.main_task and not self.main_task.done():
+            tasks_to_cancel.append(self.main_task)
+        if self.health_check_task and not self.health_check_task.done():
+            tasks_to_cancel.append(self.health_check_task)
+        if self.monitoring_task and not self.monitoring_task.done():
+            tasks_to_cancel.append(self.monitoring_task)
+        
+        # Cancel tasks
+        for task in tasks_to_cancel:
+            task.cancel()
+        
+        # Wait for tasks to complete
+        if tasks_to_cancel:
+            await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+        
+        # Disconnect exchanges
+        disconnect_tasks = []
+        for exchange in self.exchanges.values():
+            if exchange.is_connected:
+                task = asyncio.create_task(exchange.disconnect())
+                disconnect_tasks.append(task)
+        
+        if disconnect_tasks:
+            await asyncio.gather(*disconnect_tasks, return_exceptions=True)
+        
+        # Final notifications
+        if self.notification_manager and not self.emergency_stop_triggered:
+            await self.notification_manager.send_notification(
+                title="SmartArb Engine Stopped",
+                message=f"Engine shutdown gracefully. Total profit: ${float(self.total_profit):.2f}",
+                notification_type=self.notification_manager.NotificationType.INFO,
+                priority=self.notification_manager.NotificationPriority.MEDIUM
+            )
+        
+        self.is_running = False
+        self.status = EngineStatus.STOPPED
+        
+        logger.info("smartarb_engine_shutdown_complete",
+                   total_profit=float(self.total_profit),
+                   total_trades=self.total_trades_executed,
+                   uptime_hours=self._get_uptime_hours())
+        
+    except Exception as e:
+        logger.error("shutdown_error", error=str(e))
+        self.status = EngineStatus.ERROR
 
-if __name__ == "__main__":
-    # Run the engine
-    asyncio.run(main())
+# Status and reporting methods
+async def get_engine_status(self) -> Dict[str, Any]:
+    """Get comprehensive engine status"""
+    try:
+        # Basic status
+        status = {
+            'status': self.status,
+            'is_running': self.is_running,
+            'uptime_hours': self._get_uptime_hours(),
+            'emergency_stop': self.emergency_stop_triggered,
+            'timestamp': time.time()
+        }
+        
+        # Exchange status
+        status['exchanges'] = {}
+        for name, exchange in self.exchanges.items():
+            status['exchanges'][name] = {
+                'connected': exchange.is_connected,
+                'total_requests': exchange.total_requests,
+                'failed_requests': exchange.failed_requests,
+                'error_rate': exchange.failed_requests / max(exchange.total_requests, 1) * 100
+            }
+        
+        # Performance metrics
+        status['performance'] = {
+            'opportunities_found': self.total_opportunities_found,
+            'trades_executed': self.total_trades_executed,
+            'total_profit': float(self.total_profit),
+            'success_rate': self._calculate_success_rate()
+        }
+        
+        # Component status
+        status['components'] = {
+            'risk_manager': self.risk_manager is not None,
+            'portfolio_manager': self.portfolio_manager is not None,
+            'execution_engine': self.execution_engine is not None,
+            'strategy_manager': self.strategy_manager is not None,
+            'ai_system': self.ai_scheduler is not None
+        }
+        
+        # System metrics
+        status['system'] = self._get_system_health()
+        
+        # Component-specific status
+        if self.risk_manager:
+            status['risk'] = self.risk_manager.get_risk_status()
+        
+        if self.execution_engine:
+            status['execution'] = self.execution_engine.get_execution_status()
+        
+        if self.portfolio_manager:
+            portfolio_summary = await self.portfolio_manager.get_portfolio_summary()
+            status['portfolio'] = portfolio_summary.get('summary', {})
+        
+        if self.ai_scheduler:
+            status['ai'] = self.ai_scheduler.get_scheduler_status()
+        
+        return status
+        
+    except Exception as e:
+        logger.error("status_retrieval_failed", error=str(e))
+        return {
+            'status': EngineStatus.ERROR,
+            'error': str(e),
+            'timestamp': time.time()
+        }
+
+async def get_detailed_metrics(self) -> Dict[str, Any]:
+    """Get detailed metrics for analysis"""
+    try:
+        metrics = {
+            'timestamp': time.time(),
+            'engine': await self.get_engine_status()
+        }
+        
+        if self.strategy_manager:
+            metrics['strategies'] = await self.strategy_manager.get_detailed_stats()
+        
+        if self.portfolio_manager:
+            metrics['portfolio'] = await self.portfolio_manager.get_portfolio_summary()
+        
+        if self.ai_scheduler:
+            metrics['ai'] = {
+                'scheduler': self.ai_scheduler.get_scheduler_status(),
+                'triggers': self.ai_scheduler.get_trigger_status()
+            }
+        
+        if self.code_updater:
+            metrics['code_updates'] = self.code_updater.get_update_stats()
+        
+        return metrics
+        
+    except Exception as e:
+        logger.error("detailed_metrics_retrieval_failed", error=str(e))
+        return {'error': str(e), 'timestamp': time.time()}
+```
+
+# Main entry point
+
+async def main():
+“”“Main entry point for SmartArb Engine”””
+
+```
+# Create and initialize engine
+engine = SmartArbEngine()
+
+try:
+    # Initialize and start engine
+    if not await engine.initialize():
+        logger.error("engine_initialization_failed")
+        return 1
+    
+    if not await engine.start():
+        logger.error("engine_start_failed")
+        return 1
+    
+    logger.info("smartarb_engine_running")
+    
+    # Keep running until shutdown
+    while engine.is_running:
+        await asyncio.sleep(1)
+    
+    return 0
+    
+except KeyboardInterrupt:
+    logger.info("keyboard_interrupt_received")
+    await engine.shutdown()
+    return 0
+    
+except Exception as e:
+    logger.critical("unexpected_engine_error", error=str(e))
+    await engine.emergency_stop()
+    return 1
+```
+
+if **name** == “**main**”:
+import sys
+
+```
+# Set up basic logging for startup
+import logging
+logging.basicConfig(level=logging.INFO)
+
+# Run the engine
+exit_code = asyncio.run(main())
+sys.exit(exit_code)
+```
