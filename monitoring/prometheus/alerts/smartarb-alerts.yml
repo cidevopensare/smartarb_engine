@@ -1,0 +1,342 @@
+# SmartArb Engine Alert Rules
+# Comprehensive alerting rules for monitoring the trading bot
+
+groups:
+  # Critical System Alerts
+  - name: smartarb.critical
+    interval: 30s
+    rules:
+      - alert: SmartArbEngineDown
+        expr: up{job="smartarb-engine"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: engine
+        annotations:
+          summary: "SmartArb Engine is down"
+          description: "SmartArb Engine has been down for more than 1 minute"
+          runbook_url: "https://docs.smartarb.dev/runbooks/engine-down"
+
+      - alert: SmartArbDatabaseDown
+        expr: up{job="postgres"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "SmartArb database is unreachable"
+          description: "PostgreSQL database has been unreachable for more than 2 minutes"
+          runbook_url: "https://docs.smartarb.dev/runbooks/database-down"
+
+      - alert: SmartArbRedisDown
+        expr: up{job="redis"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: cache
+        annotations:
+          summary: "SmartArb Redis cache is down"
+          description: "Redis cache has been down for more than 2 minutes"
+
+      - alert: SmartArbHighErrorRate
+        expr: rate(smartarb_errors_total[5m]) > 5
+        for: 5m
+        labels:
+          severity: critical
+          component: engine
+        annotations:
+          summary: "High error rate detected"
+          description: "SmartArb Engine error rate is {{ $value }} errors per second"
+          runbook_url: "https://docs.smartarb.dev/runbooks/high-error-rate"
+
+      - alert: SmartArbCircuitBreakerActive
+        expr: smartarb_circuit_breaker_active == 1
+        for: 0s
+        labels:
+          severity: critical
+          component: risk
+        annotations:
+          summary: "Circuit breaker is active"
+          description: "Risk management circuit breaker has been triggered"
+          runbook_url: "https://docs.smartarb.dev/runbooks/circuit-breaker"
+
+      - alert: SmartArbDailyLossExceeded
+        expr: smartarb_daily_pnl < -100
+        for: 1m
+        labels:
+          severity: critical
+          component: risk
+        annotations:
+          summary: "Daily loss limit exceeded"
+          description: "Daily P&L is {{ $value }} USD, exceeding loss limit"
+          runbook_url: "https://docs.smartarb.dev/runbooks/loss-limit"
+
+  # High Priority Alerts
+  - name: smartarb.high
+    interval: 1m
+    rules:
+      - alert: SmartArbExchangeDisconnected
+        expr: smartarb_exchange_connected == 0
+        for: 3m
+        labels:
+          severity: high
+          component: exchange
+        annotations:
+          summary: "Exchange {{ $labels.exchange }} disconnected"
+          description: "Exchange {{ $labels.exchange }} has been disconnected for more than 3 minutes"
+          runbook_url: "https://docs.smartarb.dev/runbooks/exchange-disconnected"
+
+      - alert: SmartArbLowSuccessRate
+        expr: smartarb_success_rate_24h < 50
+        for: 10m
+        labels:
+          severity: high
+          component: trading
+        annotations:
+          summary: "Low trading success rate"
+          description: "24-hour success rate is {{ $value }}%, below 50% threshold"
+          runbook_url: "https://docs.smartarb.dev/runbooks/low-success-rate"
+
+      - alert: SmartArbHighAPILatency
+        expr: smartarb_api_latency_ms > 5000
+        for: 5m
+        labels:
+          severity: high
+          component: exchange
+        annotations:
+          summary: "High API latency for {{ $labels.exchange }}"
+          description: "API latency for {{ $labels.exchange }} is {{ $value }}ms"
+          runbook_url: "https://docs.smartarb.dev/runbooks/high-latency"
+
+      - alert: SmartArbMemoryUsageHigh
+        expr: smartarb_memory_usage > 80
+        for: 5m
+        labels:
+          severity: high
+          component: system
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value }}%, above 80% threshold"
+          runbook_url: "https://docs.smartarb.dev/runbooks/high-memory"
+
+      - alert: SmartArbNoOpportunitiesFound
+        expr: increase(smartarb_opportunities_found_total[1h]) == 0
+        for: 1h
+        labels:
+          severity: high
+          component: strategies
+        annotations:
+          summary: "No opportunities found in the last hour"
+          description: "No arbitrage opportunities have been detected for over 1 hour"
+          runbook_url: "https://docs.smartarb.dev/runbooks/no-opportunities"
+
+      - alert: SmartArbDiskSpaceLow
+        expr: (node_filesystem_free_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 20
+        for: 5m
+        labels:
+          severity: high
+          component: system
+        annotations:
+          summary: "Low disk space"
+          description: "Disk space is {{ $value }}% full, less than 20% remaining"
+          runbook_url: "https://docs.smartarb.dev/runbooks/disk-space"
+
+  # Medium Priority Alerts
+  - name: smartarb.medium
+    interval: 2m
+    rules:
+      - alert: SmartArbCPUUsageHigh
+        expr: smartarb_cpu_usage > 70
+        for: 10m
+        labels:
+          severity: medium
+          component: system
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is {{ $value }}%, above 70% for 10 minutes"
+
+      - alert: SmartArbTemperatureHigh
+        expr: smartarb_temperature > 70
+        for: 5m
+        labels:
+          severity: medium
+          component: hardware
+        annotations:
+          summary: "High temperature detected"
+          description: "System temperature is {{ $value }}°C, above 70°C threshold"
+          runbook_url: "https://docs.smartarb.dev/runbooks/high-temperature"
+
+      - alert: SmartArbDatabaseConnectionsHigh
+        expr: smartarb_db_connections_active > 15
+        for: 10m
+        labels:
+          severity: medium
+          component: database
+        annotations:
+          summary: "High number of database connections"
+          description: "Active database connections: {{ $value }}, above 15"
+
+      - alert: SmartArbSlowExecutions
+        expr: avg(smartarb_execution_time_seconds) > 10
+        for: 5m
+        labels:
+          severity: medium
+          component: execution
+        annotations:
+          summary: "Slow trade executions"
+          description: "Average execution time is {{ $value }} seconds, above 10s threshold"
+
+      - alert: SmartArbHighRiskScore
+        expr: avg(smartarb_risk_score) > 0.8
+        for: 15m
+        labels:
+          severity: medium
+          component: risk
+        annotations:
+          summary: "High average risk score"
+          description: "Average risk score is {{ $value }}, above 0.8 for 15 minutes"
+
+  # Warning Level Alerts
+  - name: smartarb.warning
+    interval: 5m
+    rules:
+      - alert: SmartArbModerateErrorRate
+        expr: rate(smartarb_errors_total[5m]) > 1
+        for: 10m
+        labels:
+          severity: warning
+          component: engine
+        annotations:
+          summary: "Moderate error rate detected"
+          description: "Error rate is {{ $value }} errors per second"
+
+      - alert: SmartArbLowProfitability
+        expr: smartarb_hourly_profit < 1
+        for: 4h
+        labels:
+          severity: warning
+          component: trading
+        annotations:
+          summary: "Low profitability detected"
+          description: "Hourly profit is {{ $value }} USD for the last 4 hours"
+
+      - alert: SmartArbExchangeAPIErrors
+        expr: rate(smartarb_exchange_api_errors_total[10m]) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          component: exchange
+        annotations:
+          summary: "API errors on {{ $labels.exchange }}"
+          description: "{{ $labels.exchange }} API error rate: {{ $value }} errors per second"
+
+      - alert: SmartArbHighSlippage
+        expr: avg(smartarb_slippage_percent) > 0.5
+        for: 15m
+        labels:
+          severity: warning
+          component: execution
+        annotations:
+          summary: "High slippage detected"
+          description: "Average slippage is {{ $value }}%, above 0.5% threshold"
+
+      - alert: SmartArbStrategyInactive
+        expr: smartarb_strategy_enabled == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: strategies
+        annotations:
+          summary: "Strategy {{ $labels.strategy }} is disabled"
+          description: "Trading strategy {{ $labels.strategy }} has been disabled"
+
+  # Portfolio and Balance Alerts
+  - name: smartarb.portfolio
+    interval: 5m
+    rules:
+      - alert: SmartArbLowBalance
+        expr: smartarb_portfolio_balance_usd < 100
+        for: 5m
+        labels:
+          severity: high
+          component: portfolio
+        annotations:
+          summary: "Low portfolio balance"
+          description: "Total portfolio balance is {{ $value }} USD, below $100"
+
+      - alert: SmartArbBalanceImbalance
+        expr: (max(smartarb_portfolio_balance_usd) - min(smartarb_portfolio_balance_usd)) / avg(smartarb_portfolio_balance_usd) > 0.5
+        for: 10m
+        labels:
+          severity: medium
+          component: portfolio
+        annotations:
+          summary: "Portfolio imbalance detected"
+          description: "Significant imbalance between exchange balances"
+
+      - alert: SmartArbExcessiveExposure
+        expr: smartarb_total_exposure / smartarb_max_exposure > 0.9
+        for: 5m
+        labels:
+          severity: high
+          component: risk
+        annotations:
+          summary: "Excessive portfolio exposure"
+          description: "Total exposure is {{ $value }}% of maximum allowed"
+
+  # Infrastructure Alerts
+  - name: smartarb.infrastructure
+    interval: 2m
+    rules:
+      - alert: SmartArbNetworkIssues
+        expr: rate(smartarb_network_errors_total[5m]) > 0.5
+        for: 5m
+        labels:
+          severity: medium
+          component: network
+        annotations:
+          summary: "Network connectivity issues"
+          description: "Network error rate: {{ $value }} errors per second"
+
+      - alert: SmartArbLogDiskUsage
+        expr: smartarb_log_file_size_bytes > 500000000  # 500MB
+        for: 5m
+        labels:
+          severity: warning
+          component: logging
+        annotations:
+          summary: "Large log files detected"
+          description: "Log files are consuming {{ $value | humanize1024 }}B of disk space"
+
+      - alert: SmartArbBackupFailed
+        expr: time() - smartarb_last_backup_timestamp > 86400  # 24 hours
+        for: 5m
+        labels:
+          severity: medium
+          component: backup
+        annotations:
+          summary: "Backup is overdue"
+          description: "Last successful backup was {{ $value | humanizeDuration }} ago"
+
+# Inhibition rules (prevent alert spam)
+inhibit_rules:
+  # If engine is down, don't alert on individual component failures
+  - source_match:
+      alertname: SmartArbEngineDown
+    target_match_re:
+      alertname: SmartArb.*
+    equal: ['instance']
+
+  # If database is down, don't alert on related issues
+  - source_match:
+      alertname: SmartArbDatabaseDown
+    target_match_re:
+      alertname: SmartArbDatabase.*
+    equal: ['instance']
+
+  # If circuit breaker is active, suppress trading-related alerts
+  - source_match:
+      alertname: SmartArbCircuitBreakerActive
+    target_match_re:
+      alertname: SmartArb.*Success.*|SmartArb.*Profit.*
+    equal: ['instance']
