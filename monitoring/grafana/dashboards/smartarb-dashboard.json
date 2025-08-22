@@ -1,0 +1,584 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "SmartArb Engine - Trading Dashboard",
+    "tags": ["smartarb", "trading", "arbitrage", "cryptocurrency"],
+    "style": "dark",
+    "timezone": "browser",
+    "editable": true,
+    "hideControls": false,
+    "graphTooltip": 1,
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"],
+      "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d"]
+    },
+    "refresh": "30s",
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": "-- Grafana --",
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Engine Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "smartarb_engine_status",
+            "refId": "A",
+            "legendFormat": "Engine Status"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {
+                "type": "value",
+                "value": "0",
+                "text": "STOPPED"
+              },
+              {
+                "type": "value", 
+                "value": "1",
+                "text": "RUNNING"
+              },
+              {
+                "type": "value",
+                "value": "2", 
+                "text": "ERROR"
+              }
+            ],
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": 0
+                },
+                {
+                  "color": "green", 
+                  "value": 1
+                },
+                {
+                  "color": "red",
+                  "value": 2
+                }
+              ]
+            }
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": 2,
+        "title": "Total Profit/Loss (24h)",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "smartarb_total_profit_24h",
+            "refId": "A",
+            "legendFormat": "P&L"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD",
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": -100
+                },
+                {
+                  "color": "yellow",
+                  "value": 0
+                },
+                {
+                  "color": "green",
+                  "value": 10
+                }
+              ]
+            }
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 6,
+          "y": 0
+        }
+      },
+      {
+        "id": 3,
+        "title": "Active Positions",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "smartarb_active_positions",
+            "refId": "A",
+            "legendFormat": "Positions"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 12,
+          "y": 0
+        }
+      },
+      {
+        "id": 4,
+        "title": "Success Rate (24h)",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "smartarb_success_rate_24h",
+            "refId": "A",
+            "legendFormat": "Success Rate"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": 0
+                },
+                {
+                  "color": "yellow",
+                  "value": 50
+                },
+                {
+                  "color": "green",
+                  "value": 80
+                }
+              ]
+            }
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 18,
+          "y": 0
+        }
+      },
+      {
+        "id": 5,
+        "title": "Exchange Status",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "smartarb_exchange_connected",
+            "refId": "A",
+            "legendFormat": "{{exchange}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {
+                "type": "value",
+                "value": "0",
+                "text": "DISCONNECTED"
+              },
+              {
+                "type": "value",
+                "value": "1", 
+                "text": "CONNECTED"
+              }
+            ],
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": 0
+                },
+                {
+                  "color": "green",
+                  "value": 1
+                }
+              ]
+            }
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 8
+        }
+      },
+      {
+        "id": 6,
+        "title": "System Resources",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "smartarb_cpu_usage",
+            "refId": "A",
+            "legendFormat": "CPU Usage %"
+          },
+          {
+            "expr": "smartarb_memory_usage",
+            "refId": "B", 
+            "legendFormat": "Memory Usage %"
+          },
+          {
+            "expr": "smartarb_temperature",
+            "refId": "C",
+            "legendFormat": "Temperature °C"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Percentage / Temperature",
+            "min": 0,
+            "max": 100
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        }
+      },
+      {
+        "id": 7,
+        "title": "Profit Over Time",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "smartarb_cumulative_profit",
+            "refId": "A",
+            "legendFormat": "Cumulative Profit"
+          },
+          {
+            "expr": "smartarb_hourly_profit",
+            "refId": "B",
+            "legendFormat": "Hourly Profit"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "USD",
+            "min": null
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 16
+        }
+      },
+      {
+        "id": 8,
+        "title": "Opportunities Found vs Executed",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(smartarb_opportunities_found_total[5m]) * 60",
+            "refId": "A",
+            "legendFormat": "Opportunities Found/min"
+          },
+          {
+            "expr": "rate(smartarb_opportunities_executed_total[5m]) * 60",
+            "refId": "B",
+            "legendFormat": "Opportunities Executed/min"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Opportunities per minute",
+            "min": 0
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 24
+        }
+      },
+      {
+        "id": 9,
+        "title": "Strategy Performance",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "smartarb_strategy_profit",
+            "refId": "A",
+            "legendFormat": "{{strategy}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 24
+        }
+      },
+      {
+        "id": 10,
+        "title": "Portfolio Balance by Exchange",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "smartarb_portfolio_balance_usd",
+            "refId": "A",
+            "legendFormat": "{{exchange}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD"
+          }
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 32
+        }
+      },
+      {
+        "id": 11,
+        "title": "API Latency by Exchange",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "smartarb_api_latency_ms",
+            "refId": "A",
+            "legendFormat": "{{exchange}}"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Milliseconds",
+            "min": 0
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 32
+        }
+      },
+      {
+        "id": 12,
+        "title": "Risk Metrics",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "smartarb_risk_score",
+            "refId": "A",
+            "legendFormat": "Average Risk Score"
+          },
+          {
+            "expr": "smartarb_daily_volume_utilized",
+            "refId": "B",
+            "legendFormat": "Daily Volume Utilized %"
+          },
+          {
+            "expr": "smartarb_position_utilization",
+            "refId": "C",
+            "legendFormat": "Position Utilization %"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Percentage / Score",
+            "min": 0,
+            "max": 100
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 40
+        }
+      },
+      {
+        "id": 13,
+        "title": "Recent Trades",
+        "type": "logs",
+        "targets": [
+          {
+            "expr": "{job=\"smartarb\", level=\"INFO\"} |= \"trade_executed\"",
+            "refId": "A"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 48
+        }
+      },
+      {
+        "id": 14,
+        "title": "Error Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(smartarb_errors_total[5m]) * 60",
+            "refId": "A",
+            "legendFormat": "Errors per minute"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Errors per minute",
+            "min": 0
+          }
+        ],
+        "alert": {
+          "conditions": [
+            {
+              "query": {
+                "queryType": "",
+                "refId": "A"
+              },
+              "reducer": {
+                "type": "last",
+                "params": []
+              },
+              "evaluator": {
+                "params": [5],
+                "type": "gt"
+              }
+            }
+          ],
+          "executionErrorState": "alerting",
+          "noDataState": "no_data",
+          "frequency": "1m",
+          "handler": 1,
+          "name": "High Error Rate",
+          "message": "SmartArb Engine error rate is above 5 errors per minute"
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 56
+        }
+      },
+      {
+        "id": 15,
+        "title": "Database Connections",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "smartarb_db_connections_active",
+            "refId": "A",
+            "legendFormat": "Active Connections"
+          },
+          {
+            "expr": "smartarb_db_connections_idle",
+            "refId": "B",
+            "legendFormat": "Idle Connections"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Connections",
+            "min": 0
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 56
+        }
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "name": "exchange",
+          "type": "query",
+          "query": "label_values(smartarb_exchange_connected, exchange)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true
+        },
+        {
+          "name": "strategy",
+          "type": "query", 
+          "query": "label_values(smartarb_strategy_profit, strategy)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true
+        }
+      ]
+    },
+    "links": [
+      {
+        "title": "SmartArb API",
+        "url": "http://localhost:8000/docs",
+        "type": "link",
+        "targetBlank": true
+      },
+      {
+        "title": "Logs",
+        "url": "/d/smartarb-logs",
+        "type": "dashboards"
+      }
+    ]
+  },
+  "folderId": null,
+  "overwrite": true
+}
