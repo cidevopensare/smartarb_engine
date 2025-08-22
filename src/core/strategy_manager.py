@@ -1,741 +1,553 @@
+#!/usr/bin/env python3
 “””
 Strategy Manager for SmartArb Engine
-Complete implementation for managing multiple trading strategies and coordinating their execution
+Manages and executes arbitrage trading strategies
 “””
 
 import asyncio
 from typing import Dict, List, Optional, Any, Tuple
 from decimal import Decimal
+from dataclasses import dataclass
+from enum import Enum
+import structlog
 import time
 from datetime import datetime, timedelta
-import structlog
+import statistics
 
-from ..exchanges.base_exchange import BaseExchange
-from ..strategies.base_strategy import BaseStrategy, Opportunity, OpportunityStatus
-from ..strategies.spatial_arbitrage import SpatialArbitrageStrategy
-from .risk_manager import RiskManager, RiskAssessment
-from .execution_engine import ExecutionEngine, ExecutionResult
+from ..exchanges.base_exchange import BaseExchange, OrderBook, Ticker
+from .risk_manager import RiskManager
+from .execution_engine import ExecutionEngine
 
 logger = structlog.get_logger(**name**)
 
-class StrategyManager:
-“””
-Strategy Management System
+class StrategyType(Enum):
+“”“Strategy type enumeration”””
+SPATIAL_ARBITRAGE = “spatial_arbitrage”
+TRIANGULAR_ARBITRAGE = “triangular_arbitrage”
+STATISTICAL_ARBITRAGE = “statistical_arbitrage”
+
+class OpportunityStatus(Enum):
+“”“Opportunity status enumeration”””
+DETECTED = “detected”
+ANALYZING = “analyzing”
+APPROVED = “approved”
+EXECUTING = “executing”
+COMPLETED = “completed”
+FAILED = “failed”
+REJECTED = “rejected”
+
+@dataclass
+class ArbitrageOpportunity:
+“”“Arbitrage opportunity data structure”””
+id: str
+strategy_type: StrategyType
+symbol: str
+buy_exchange: str
+sell_exchange: str
+buy_price: Decimal
+sell_price: Decimal
+spread: Decimal
+spread_percentage: Decimal
+potential_profit: Decimal
+required_capital: Decimal
+confidence: float
+risk_score: float
+status: OpportunityStatus
+detected_time: float
+expiry_time: float
 
 ```
-Features:
-- Multiple strategy coordination
-- Opportunity prioritization and filtering
-- Execution scheduling and management
-- Performance monitoring and analytics
-- Resource allocation and limits
-- Strategy configuration management
-"""
+@property
+def is_expired(self) -> bool:
+    """Check if opportunity has expired"""
+    return time.time() > self.expiry_time
 
-def __init__(self, exchanges: Dict[str, BaseExchange], risk_manager: RiskManager,
-             execution_engine: ExecutionEngine, config: Dict[str, Any]):
+@property
+def time_remaining(self) -> float:
+    """Get time remaining before expiry"""
+    return max(0, self.expiry_time - time.time())
+```
+
+class SpatialArbitrageStrategy:
+“”“Spatial arbitrage strategy implementation”””
+
+```
+def __init__(self, exchanges: Dict[str, BaseExchange], config: Dict[str, Any]):
+    self.exchanges = exchanges
+    self.config = config.get('strategies', {}).get('spatial_arbitrage', {})
+    self.enabled = self.config.get('enabled', True)
+    
+    # Strategy parameters
+    self.min_spread_percent = Decimal(str(self.config.get('min_spread_percent', 0.2)))
+    self.max_position_size = Decimal(str(self.config.get('max_position_size', 1000)))
+    self.confidence_threshold = self.config.get('confidence_threshold', 0.7)
+    self.opportunity_ttl = self.config.get('opportunity_ttl_seconds', 30)
+    
+    # Exchange preferences
+    self.preferred_pairs = self.config.get('preferred_pairs', [])
+    self.trading_pairs = set(self.config.get('trading_pairs', []))
+    
+    # Opportunity tracking
+    self.active_opportunities = {}
+    self.opportunity_history = []
+    
+    self.logger = structlog.get_logger("strategy.spatial_arbitrage")
+
+async def scan_opportunities(self) -> List[ArbitrageOpportunity]:
+    """Scan for spatial arbitrage opportunities"""
+    opportunities = []
+    
+    if not self.enabled:
+        return opportunities
+    
+    try:
+        # Get all tickers from all exchanges
+        exchange_tickers = {}
+        
+        for exchange_name, exchange in self.exchanges.items():
+            if not exchange.connected:
+                continue
+            
+            exchange_tickers[exchange_name] = {}
+            
+            for symbol in self.trading_pairs:
+                try:
+                    ticker = await exchange.get_ticker(symbol)
+                    exchange_tickers[exchange_name][symbol] = ticker
+                except Exception as e:
+                    self.logger.warning("ticker_fetch_failed",
+                                      exchange=exchange_name,
+                                      symbol=symbol,
+                                      error=str(e))
+        
+        # Compare prices across exchanges
+        for symbol in self.trading_pairs:
+            symbol_opportunities = await self._analyze_symbol_opportunities(
+                symbol, exchange_tickers
+            )
+            opportunities.extend(symbol_opportunities)
+        
+        # Filter and rank opportunities
+        opportunities = self._filter_opportunities(opportunities)
+        opportunities = self._rank_opportunities(opportunities)
+        
+        self.logger.info("opportunities_scanned",
+                       total_found=len(opportunities),
+                       symbol_count=len(self.trading_pairs))
+        
+        return opportunities
+        
+    except Exception as e:
+        self.logger.error("opportunity_scan_failed", error=str(e))
+        return []
+
+async def _analyze_symbol_opportunities(self, symbol: str, 
+                                      exchange_tickers: Dict[str, Dict[str, Ticker]]) -> List[ArbitrageOpportunity]:
+    """Analyze opportunities for a specific symbol"""
+    opportunities = []
+    
+    # Get all exchange prices for this symbol
+    symbol_prices = {}
+    for exchange_name, tickers in exchange_tickers.items():
+        if symbol in tickers:
+            ticker = tickers[symbol]
+            symbol_prices[exchange_name] = {
+                'bid': ticker.bid,
+                'ask': ticker.ask,
+                'timestamp': ticker.timestamp
+            }
+    
+    if len(symbol_prices) < 2:
+        return opportunities
+    
+    # Find arbitrage opportunities
+    exchange_names = list(symbol_prices.keys())
+    
+    for i in range(len(exchange_names)):
+        for j in range(i + 1, len(exchange_names)):
+            buy_exchange = exchange_names[i]
+            sell_exchange = exchange_names[j]
+            
+            # Check both directions
+            opp1 = await self._calculate_opportunity(
+                symbol, buy_exchange, sell_exchange, symbol_prices
+            )
+            if opp1:
+                opportunities.append(opp1)
+            
+            opp2 = await self._calculate_opportunity(
+                symbol, sell_exchange, buy_exchange, symbol_prices
+            )
+            if opp2:
+                opportunities.append(opp2)
+    
+    return opportunities
+
+async def _calculate_opportunity(self, symbol: str, buy_exchange: str, 
+                               sell_exchange: str, symbol_prices: Dict[str, Dict]) -> Optional[ArbitrageOpportunity]:
+    """Calculate arbitrage opportunity between two exchanges"""
+    
+    buy_price = symbol_prices[buy_exchange]['ask']  # We buy at ask price
+    sell_price = symbol_prices[sell_exchange]['bid']  # We sell at bid price
+    
+    # Calculate spread
+    spread = sell_price - buy_price
+    spread_percentage = (spread / buy_price) * 100
+    
+    # Check if spread meets minimum threshold
+    if spread_percentage < self.min_spread_percent:
+        return None
+    
+    # Calculate potential profit (considering fees)
+    buy_fee_rate = self._get_trading_fee(buy_exchange, 'taker')
+    sell_fee_rate = self._get_trading_fee(sell_exchange, 'taker')
+    
+    # Estimate trade size (conservative approach)
+    max_trade_size = min(
+        self.max_position_size / buy_price,  # Based on position limit
+        self._estimate_max_trade_size(symbol, buy_exchange, sell_exchange)
+    )
+    
+    # Calculate costs and profit
+    buy_cost = buy_price * max_trade_size
+    buy_fee = buy_cost * buy_fee_rate
+    
+    sell_revenue = sell_price * max_trade_size
+    sell_fee = sell_revenue * sell_fee_rate
+    
+    total_cost = buy_cost + buy_fee + sell_fee
+    net_profit = sell_revenue - total_cost
+    profit_percentage = (net_profit / total_cost) * 100
+    
+    # Skip if not profitable after fees
+    if net_profit <= 0:
+        return None
+    
+    # Calculate confidence and risk score
+    confidence = self._calculate_confidence(symbol, buy_exchange, sell_exchange, symbol_prices)
+    risk_score = self._calculate_risk_score(symbol, spread_percentage, max_trade_size)
+    
+    # Generate opportunity ID
+    opportunity_id = f"{symbol}_{buy_exchange}_{sell_exchange}_{int(time.time())}"
+    
+    return ArbitrageOpportunity(
+        id=opportunity_id,
+        strategy_type=StrategyType.SPATIAL_ARBITRAGE,
+        symbol=symbol,
+        buy_exchange=buy_exchange,
+        sell_exchange=sell_exchange,
+        buy_price=buy_price,
+        sell_price=sell_price,
+        spread=spread,
+        spread_percentage=spread_percentage,
+        potential_profit=net_profit,
+        required_capital=total_cost,
+        confidence=confidence,
+        risk_score=risk_score,
+        status=OpportunityStatus.DETECTED,
+        detected_time=time.time(),
+        expiry_time=time.time() + self.opportunity_ttl
+    )
+
+def _get_trading_fee(self, exchange_name: str, order_type: str) -> Decimal:
+    """Get trading fee for exchange"""
+    exchange_config = self.config.get('exchanges', {}).get(exchange_name, {})
+    
+    if order_type == 'maker':
+        return Decimal(str(exchange_config.get('maker_fee', 0.001)))
+    else:
+        return Decimal(str(exchange_config.get('taker_fee', 0.001)))
+
+def _estimate_max_trade_size(self, symbol: str, buy_exchange: str, sell_exchange: str) -> Decimal:
+    """Estimate maximum safe trade size based on order book depth"""
+    # This is a simplified implementation
+    # In practice, you'd analyze order book depth on both exchanges
+    return Decimal('1.0')  # Conservative default
+
+def _calculate_confidence(self, symbol: str, buy_exchange: str, sell_exchange: str, 
+                        symbol_prices: Dict[str, Dict]) -> float:
+    """Calculate confidence score for opportunity"""
+    # Factors that affect confidence:
+    # 1. Price data freshness
+    # 2. Exchange reliability
+    # 3. Historical success rate
+    # 4. Market volatility
+    
+    current_time = time.time()
+    confidence = 1.0
+    
+    # Price data freshness
+    for exchange_name in [buy_exchange, sell_exchange]:
+        price_age = current_time - symbol_prices[exchange_name]['timestamp']
+        if price_age > 10:  # 10 seconds
+            confidence *= 0.8
+        elif price_age > 5:  # 5 seconds
+            confidence *= 0.9
+    
+    # Exchange preference
+    preferred_exchanges = {pair[0], pair[1] for pair in self.preferred_pairs}
+    if buy_exchange in preferred_exchanges and sell_exchange in preferred_exchanges:
+        confidence *= 1.1
+    
+    return min(confidence, 1.0)
+
+def _calculate_risk_score(self, symbol: str, spread_percentage: Decimal, trade_size: Decimal) -> float:
+    """Calculate risk score for opportunity"""
+    # Lower score = lower risk
+    risk_score = 0.5  # Base risk
+    
+    # Higher spreads are generally safer
+    if spread_percentage > 1.0:
+        risk_score *= 0.8
+    elif spread_percentage < 0.3:
+        risk_score *= 1.2
+    
+    # Larger trades are riskier
+    if trade_size > Decimal('10'):
+        risk_score *= 1.1
+    
+    return min(risk_score, 1.0)
+
+def _filter_opportunities(self, opportunities: List[ArbitrageOpportunity]) -> List[ArbitrageOpportunity]:
+    """Filter opportunities based on criteria"""
+    filtered = []
+    
+    for opp in opportunities:
+        # Check confidence threshold
+        if opp.confidence < self.confidence_threshold:
+            continue
+        
+        # Check if opportunity already exists
+        if self._is_duplicate_opportunity(opp):
+            continue
+        
+        # Check exchange pair preferences
+        if not self._is_preferred_exchange_pair(opp.buy_exchange, opp.sell_exchange):
+            continue
+        
+        filtered.append(opp)
+    
+    return filtered
+
+def _rank_opportunities(self, opportunities: List[ArbitrageOpportunity]) -> List[ArbitrageOpportunity]:
+    """Rank opportunities by attractiveness"""
+    # Sort by a composite score considering profit, confidence, and risk
+    def score_opportunity(opp: ArbitrageOpportunity) -> float:
+        profit_score = float(opp.potential_profit)
+        confidence_score = opp.confidence * 100
+        risk_penalty = opp.risk_score * 50
+        
+        return profit_score + confidence_score - risk_penalty
+    
+    return sorted(opportunities, key=score_opportunity, reverse=True)
+
+def _is_duplicate_opportunity(self, opportunity: ArbitrageOpportunity) -> bool:
+    """Check if similar opportunity already exists"""
+    for existing_opp in self.active_opportunities.values():
+        if (existing_opp.symbol == opportunity.symbol and
+            existing_opp.buy_exchange == opportunity.buy_exchange and
+            existing_opp.sell_exchange == opportunity.sell_exchange and
+            not existing_opp.is_expired):
+            return True
+    return False
+
+def _is_preferred_exchange_pair(self, exchange1: str, exchange2: str) -> bool:
+    """Check if exchange pair is in preferences"""
+    if not self.preferred_pairs:
+        return True  # No preferences set, allow all
+    
+    for pair in self.preferred_pairs:
+        if (exchange1 in pair and exchange2 in pair):
+            return True
+    
+    return False
+```
+
+class StrategyManager:
+“”“Main strategy manager orchestrating all trading strategies”””
+
+```
+def __init__(self, exchanges: Dict[str, BaseExchange], 
+             risk_manager: RiskManager, 
+             execution_engine: ExecutionEngine,
+             config: Dict[str, Any]):
+    
     self.exchanges = exchanges
     self.risk_manager = risk_manager
     self.execution_engine = execution_engine
     self.config = config
     
-    # Strategy registry
-    self.strategies: Dict[str, BaseStrategy] = {}
-    self.enabled_strategies: List[str] = []
+    # Initialize strategies
+    self.strategies = {}
+    self._initialize_strategies()
     
-    # Execution control
-    strategy_config = config.get('strategies', {})
-    self.max_concurrent_opportunities = config.get('engine', {}).get('max_concurrent_opportunities', 3)
-    self.scan_interval = strategy_config.get('scan_interval', 5)  # seconds
-    self.opportunity_timeout = strategy_config.get('opportunity_timeout', 60)  # seconds
+    # Opportunity management
+    self.active_opportunities = {}
+    self.opportunity_queue = asyncio.Queue()
+    
+    # Strategy execution
+    self.running = False
+    self.scan_interval = config.get('strategies', {}).get('scan_frequency', 5)
     
     # Performance tracking
     self.total_opportunities_found = 0
-    self.total_opportunities_executed = 0
-    self.total_profit = Decimal('0')
-    self.total_loss = Decimal('0')
+    self.successful_trades = 0
+    self.failed_trades = 0
     
-    # Active opportunity management
-    self.active_opportunities: Dict[str, Opportunity] = {}
-    self.execution_queue: List[str] = []  # Opportunity IDs in execution queue
-    self.executing_opportunities: Dict[str, asyncio.Task] = {}
-    
-    # Strategy performance tracking
-    self.strategy_performance: Dict[str, Dict[str, Any]] = {}
-    
-    # Last scan time tracking
-    self.last_scan_times: Dict[str, float] = {}
-    
-    # Initialize strategies
-    self._initialize_strategies()
-    
-    logger.info("strategy_manager_initialized",
-               total_strategies=len(self.strategies),
-               enabled_strategies=len(self.enabled_strategies),
-               max_concurrent=self.max_concurrent_opportunities)
+    self.logger = structlog.get_logger("strategy_manager")
 
-def _initialize_strategies(self) -> None:
-    """Initialize and register trading strategies"""
-    
+def _initialize_strategies(self):
+    """Initialize all enabled strategies"""
     strategies_config = self.config.get('strategies', {})
     
-    # Initialize Spatial Arbitrage Strategy
-    spatial_config = strategies_config.get('spatial_arbitrage', {})
-    if spatial_config.get('enabled', True):
-        spatial_strategy = SpatialArbitrageStrategy(self.exchanges, spatial_config)
-        self.register_strategy(spatial_strategy)
-        self.enabled_strategies.append('spatial_arbitrage')
-        logger.info("spatial_arbitrage_strategy_registered")
+    # Spatial arbitrage strategy
+    if strategies_config.get('spatial_arbitrage', {}).get('enabled', False):
+        self.strategies['spatial_arbitrage'] = SpatialArbitrageStrategy(
+            self.exchanges, self.config
+        )
+        self.logger.info("spatial_arbitrage_strategy_initialized")
     
-    # Add other strategies here as they are implemented
-    # triangular_config = strategies_config.get('triangular_arbitrage', {})
-    # if triangular_config.get('enabled', False):
-    #     triangular_strategy = TriangularArbitrageStrategy(self.exchanges, triangular_config)
-    #     self.register_strategy(triangular_strategy)
+    # Future strategies can be added here
+    # if strategies_config.get('triangular_arbitrage', {}).get('enabled', False):
+    #     self.strategies['triangular_arbitrage'] = TriangularArbitrageStrategy(...)
     
-    # Initialize performance tracking for all strategies
-    for strategy_name in self.strategies.keys():
-        self.strategy_performance[strategy_name] = {
-            'opportunities_found': 0,
-            'opportunities_executed': 0,
-            'total_profit': Decimal('0'),
-            'total_loss': Decimal('0'),
-            'success_rate': 0.0,
-            'avg_profit_per_trade': Decimal('0'),
-            'last_opportunity_time': 0,
-            'execution_times': [],
-            'error_count': 0
-        }
+    self.logger.info("strategy_manager_initialized", 
+                    active_strategies=list(self.strategies.keys()))
 
-def register_strategy(self, strategy: BaseStrategy) -> None:
-    """Register a new trading strategy"""
-    self.strategies[strategy.name] = strategy
-    self.last_scan_times[strategy.name] = 0
+async def start(self):
+    """Start strategy manager"""
+    if self.running:
+        return
     
-    logger.info("strategy_registered",
-               strategy_name=strategy.name,
-               enabled=strategy.enabled,
-               priority=strategy.priority)
-
-def unregister_strategy(self, strategy_name: str) -> bool:
-    """Unregister a trading strategy"""
-    if strategy_name in self.strategies:
-        del self.strategies[strategy_name]
-        if strategy_name in self.enabled_strategies:
-            self.enabled_strategies.remove(strategy_name)
-        if strategy_name in self.last_scan_times:
-            del self.last_scan_times[strategy_name]
-        
-        logger.info("strategy_unregistered", strategy_name=strategy_name)
-        return True
-    return False
-
-async def scan_markets(self) -> List[Opportunity]:
-    """Scan markets for opportunities across all enabled strategies"""
+    self.running = True
+    self.logger.info("strategy_manager_starting")
     
-    all_opportunities = []
-    scan_tasks = []
+    # Start opportunity scanning
+    scan_task = asyncio.create_task(self._opportunity_scanner())
+    
+    # Start opportunity processor
+    processor_task = asyncio.create_task(self._opportunity_processor())
     
     try:
-        # Create scan tasks for each enabled strategy
-        for strategy_name in self.enabled_strategies:
-            strategy = self.strategies.get(strategy_name)
-            if not strategy or not strategy.enabled:
-                continue
-            
-            # Check if enough time has passed since last scan
-            now = time.time()
-            last_scan = self.last_scan_times.get(strategy_name, 0)
-            if now - last_scan < strategy.scan_frequency:
-                continue
-            
-            # Create scan task
-            task = asyncio.create_task(self._scan_strategy(strategy_name, strategy))
-            scan_tasks.append(task)
-        
-        if not scan_tasks:
-            return all_opportunities
-        
-        # Execute all scans concurrently
-        scan_results = await asyncio.gather(*scan_tasks, return_exceptions=True)
-        
-        # Process results
-        for i, result in enumerate(scan_results):
-            if isinstance(result, Exception):
-                strategy_name = list(self.enabled_strategies)[i]
-                logger.error("strategy_scan_failed",
-                           strategy_name=strategy_name,
-                           error=str(result))
-                self._update_strategy_error_count(strategy_name)
-            elif result:
-                strategy_name, opportunities = result
-                all_opportunities.extend(opportunities)
-                self._update_strategy_performance(strategy_name, len(opportunities))
-        
-        # Filter and prioritize opportunities
-        if all_opportunities:
-            all_opportunities = await self._filter_and_prioritize_opportunities(all_opportunities)
-        
-        logger.info("market_scan_completed",
-                   strategies_scanned=len(scan_tasks),
-                   opportunities_found=len(all_opportunities))
-        
-        return all_opportunities
-        
+        await asyncio.gather(scan_task, processor_task)
+    except asyncio.CancelledError:
+        self.logger.info("strategy_manager_cancelled")
     except Exception as e:
-        logger.error("market_scan_failed", error=str(e))
-        return []
+        self.logger.error("strategy_manager_error", error=str(e))
+    finally:
+        self.running = False
 
-async def _scan_strategy(self, strategy_name: str, strategy: BaseStrategy) -> Optional[Tuple[str, List[Opportunity]]]:
-    """Scan a single strategy for opportunities"""
-    try:
-        start_time = time.time()
-        
-        # Perform strategy scan
-        opportunities = await strategy.scan_markets()
-        
-        # Update scan time
-        self.last_scan_times[strategy_name] = time.time()
-        
-        # Log scan performance
-        scan_duration = time.time() - start_time
-        logger.debug("strategy_scan_completed",
-                    strategy_name=strategy_name,
-                    opportunities=len(opportunities),
-                    scan_duration=scan_duration)
-        
-        return strategy_name, opportunities
-        
-    except Exception as e:
-        logger.error("strategy_scan_error",
-                    strategy_name=strategy_name,
-                    error=str(e))
-        raise e
+async def stop(self):
+    """Stop strategy manager"""
+    self.running = False
+    self.logger.info("strategy_manager_stopping")
 
-async def _filter_and_prioritize_opportunities(self, opportunities: List[Opportunity]) -> List[Opportunity]:
-    """Filter and prioritize opportunities"""
-    
-    if not opportunities:
-        return []
-    
-    # Remove expired opportunities
-    valid_opportunities = [
-        opp for opp in opportunities 
-        if not opp.is_expired
-    ]
-    
-    if not valid_opportunities:
-        logger.debug("all_opportunities_expired", 
-                    total=len(opportunities))
-        return []
-    
-    # Filter by risk assessment
-    risk_filtered = []
-    for opportunity in valid_opportunities:
+async def _opportunity_scanner(self):
+    """Continuously scan for opportunities"""
+    while self.running:
         try:
-            # Quick risk check
-            if (opportunity.risk_score <= 0.8 and 
-                opportunity.confidence_level >= 0.6 and
-                opportunity.expected_profit > 0):
-                risk_filtered.append(opportunity)
-                
+            start_time = time.time()
+            
+            # Scan all strategies for opportunities
+            all_opportunities = []
+            
+            for strategy_name, strategy in self.strategies.items():
+                if hasattr(strategy, 'scan_opportunities'):
+                    opportunities = await strategy.scan_opportunities()
+                    all_opportunities.extend(opportunities)
+            
+            # Add opportunities to queue
+            for opportunity in all_opportunities:
+                await self.opportunity_queue.put(opportunity)
+                self.total_opportunities_found += 1
+            
+            scan_duration = time.time() - start_time
+            
+            self.logger.info("opportunity_scan_completed",
+                           opportunities_found=len(all_opportunities),
+                           scan_duration=scan_duration)
+            
+            # Wait before next scan
+            await asyncio.sleep(self.scan_interval)
+            
         except Exception as e:
-            logger.warning("opportunity_risk_filter_failed",
-                         opportunity_id=opportunity.opportunity_id,
-                         error=str(e))
-    
-    # Sort by expected profit (descending)
-    risk_filtered.sort(key=lambda o: float(o.expected_profit), reverse=True)
-    
-    # Limit to maximum concurrent opportunities
-    final_opportunities = risk_filtered[:self.max_concurrent_opportunities]
-    
-    logger.info("opportunities_filtered_and_prioritized",
-               initial_count=len(opportunities),
-               valid_count=len(valid_opportunities),
-               risk_filtered_count=len(risk_filtered),
-               final_count=len(final_opportunities))
-    
-    return final_opportunities
+            self.logger.error("opportunity_scan_error", error=str(e))
+            await asyncio.sleep(self.scan_interval)
 
-async def execute_opportunity(self, opportunity: Opportunity) -> Optional[Dict[str, Any]]:
-    """Execute a single trading opportunity"""
-    
-    opportunity_id = opportunity.opportunity_id
-    
+async def _opportunity_processor(self):
+    """Process detected opportunities"""
+    while self.running:
+        try:
+            # Wait for opportunity
+            opportunity = await asyncio.wait_for(
+                self.opportunity_queue.get(), 
+                timeout=1.0
+            )
+            
+            # Process opportunity
+            await self._process_opportunity(opportunity)
+            
+        except asyncio.TimeoutError:
+            continue
+        except Exception as e:
+            self.logger.error("opportunity_processing_error", error=str(e))
+
+async def _process_opportunity(self, opportunity: ArbitrageOpportunity):
+    """Process a single arbitrage opportunity"""
     try:
-        logger.info("opportunity_execution_started",
-                   opportunity_id=opportunity_id,
-                   strategy=opportunity.strategy_name,
-                   symbol=opportunity.symbol,
-                   expected_profit=float(opportunity.expected_profit))
+        # Check if opportunity is still valid
+        if opportunity.is_expired:
+            self.logger.debug("opportunity_expired", opportunity_id=opportunity.id)
+            return
         
-        # Add to active opportunities
-        self.active_opportunities[opportunity_id] = opportunity
-        
-        # Validate opportunity
-        strategy = self.strategies.get(opportunity.strategy_name)
-        if not strategy:
-            raise ValueError(f"Strategy {opportunity.strategy_name} not found")
-        
-        if not await strategy.validate_opportunity(opportunity):
-            opportunity.update_status(OpportunityStatus.FAILED)
-            return {'success': False, 'reason': 'Validation failed'}
+        opportunity.status = OpportunityStatus.ANALYZING
         
         # Risk assessment
-        risk_assessment = await self.risk_manager.assess_opportunity_risk(opportunity)
+        risk_assessment = await self.risk_manager.assess_opportunity(opportunity)
         
-        if not risk_assessment.is_acceptable:
-            opportunity.update_status(OpportunityStatus.FAILED)
-            logger.warning("opportunity_rejected_by_risk_manager",
-                         opportunity_id=opportunity_id,
-                         risk_level=risk_assessment.risk_level.value,
-                         violations=len(risk_assessment.violations))
-            return {
-                'success': False, 
-                'reason': 'Risk assessment failed',
-                'risk_assessment': risk_assessment
-            }
+        if not risk_assessment['approved']:
+            opportunity.status = OpportunityStatus.REJECTED
+            self.logger.info("opportunity_rejected", 
+                           opportunity_id=opportunity.id,
+                           reason=risk_assessment['reason'])
+            return
         
-        # Add position to risk manager
-        await self.risk_manager.add_position(opportunity)
+        opportunity.status = OpportunityStatus.APPROVED
         
         # Execute opportunity
-        execution_result = await self.execution_engine.execute_opportunity(opportunity, risk_assessment)
+        opportunity.status = OpportunityStatus.EXECUTING
         
-        # Process execution result
-        result = await self._process_execution_result(opportunity, execution_result)
+        execution_result = await self.execution_engine.execute_arbitrage(opportunity)
         
-        # Update performance metrics
-        self._update_execution_performance(opportunity, execution_result)
-        
-        return result
-        
-    except Exception as e:
-        logger.error("opportunity_execution_failed",
-                    opportunity_id=opportunity_id,
-                    error=str(e))
-        
-        # Clean up
-        opportunity.update_status(OpportunityStatus.FAILED)
-        await self._cleanup_failed_opportunity(opportunity)
-        
-        return {'success': False, 'reason': str(e)}
-    
-    finally:
-        # Remove from active opportunities
-        if opportunity_id in self.active_opportunities:
-            del self.active_opportunities[opportunity_id]
-
-async def _process_execution_result(self, opportunity: Opportunity, 
-                                  execution_result: ExecutionResult) -> Dict[str, Any]:
-    """Process the result of opportunity execution"""
-    
-    opportunity_id = opportunity.opportunity_id
-    
-    try:
-        if execution_result.success_rate >= 100:
-            # Successful execution
-            opportunity.update_status(OpportunityStatus.EXECUTED)
-            opportunity.actual_profit = execution_result.actual_profit
-            
-            # Update risk manager
-            await self.risk_manager.update_position_pnl(
-                opportunity_id, 
-                execution_result.actual_profit
-            )
-            
-            # Update totals
-            self.total_opportunities_executed += 1
-            if execution_result.actual_profit > 0:
-                self.total_profit += execution_result.actual_profit
-            else:
-                self.total_loss += abs(execution_result.actual_profit)
-            
-            logger.info("opportunity_executed_successfully",
-                       opportunity_id=opportunity_id,
-                       actual_profit=float(execution_result.actual_profit),
-                       execution_time=execution_result.execution_time)
-            
-            return {
-                'success': True,
-                'profit': float(execution_result.actual_profit),
-                'execution_time': execution_result.execution_time,
-                'fees_paid': float(execution_result.fees_paid),
-                'orders_executed': len(execution_result.executed_orders),
-                'execution_result': execution_result
-            }
-        
+        if execution_result['success']:
+            opportunity.status = OpportunityStatus.COMPLETED
+            self.successful_trades += 1
+            self.logger.info("opportunity_executed_successfully",
+                           opportunity_id=opportunity.id,
+                           profit=execution_result.get('actual_profit'))
         else:
-            # Partial or failed execution
-            opportunity.update_status(OpportunityStatus.FAILED)
-            
-            # Handle partial execution
-            if execution_result.success_rate > 0:
-                logger.warning("opportunity_partially_executed",
-                             opportunity_id=opportunity_id,
-                             success_rate=execution_result.success_rate,
-                             actual_profit=float(execution_result.actual_profit))
-            else:
-                logger.error("opportunity_execution_completely_failed",
-                           opportunity_id=opportunity_id,
-                           error=execution_result.error_message)
-            
-            # Update risk manager
-            await self.risk_manager.update_position_pnl(
-                opportunity_id, 
-                execution_result.actual_profit
-            )
-            
-            return {
-                'success': False,
-                'profit': float(execution_result.actual_profit),
-                'execution_time': execution_result.execution_time,
-                'success_rate': execution_result.success_rate,
-                'error': execution_result.error_message,
-                'execution_result': execution_result
-            }
-            
-    except Exception as e:
-        logger.error("execution_result_processing_failed",
-                    opportunity_id=opportunity_id,
-                    error=str(e))
-        return {'success': False, 'reason': f'Result processing failed: {str(e)}'}
-    
-    finally:
-        # Remove position from risk manager
-        await self.risk_manager.remove_position(opportunity_id)
-
-async def _cleanup_failed_opportunity(self, opportunity: Opportunity) -> None:
-    """Clean up after a failed opportunity"""
-    try:
-        # Remove from risk manager if it was added
-        await self.risk_manager.remove_position(opportunity.opportunity_id)
-        
-        # Update strategy performance
-        strategy_name = opportunity.strategy_name
-        if strategy_name in self.strategy_performance:
-            self.strategy_performance[strategy_name]['error_count'] += 1
+            opportunity.status = OpportunityStatus.FAILED
+            self.failed_trades += 1
+            self.logger.warning("opportunity_execution_failed",
+                              opportunity_id=opportunity.id,
+                              error=execution_result.get('error'))
         
     except Exception as e:
-        logger.warning("opportunity_cleanup_failed",
-                      opportunity_id=opportunity.opportunity_id,
-                      error=str(e))
+        opportunity.status = OpportunityStatus.FAILED
+        self.failed_trades += 1
+        self.logger.error("opportunity_processing_failed",
+                        opportunity_id=opportunity.id,
+                        error=str(e))
 
-def _update_strategy_performance(self, strategy_name: str, opportunities_found: int) -> None:
-    """Update strategy performance metrics"""
-    if strategy_name not in self.strategy_performance:
-        return
-    
-    performance = self.strategy_performance[strategy_name]
-    performance['opportunities_found'] += opportunities_found
-    performance['last_opportunity_time'] = time.time()
-    
-    self.total_opportunities_found += opportunities_found
-
-def _update_execution_performance(self, opportunity: Opportunity, result: ExecutionResult) -> None:
-    """Update execution performance metrics"""
-    strategy_name = opportunity.strategy_name
-    if strategy_name not in self.strategy_performance:
-        return
-    
-    performance = self.strategy_performance[strategy_name]
-    
-    if result.success_rate >= 100:
-        performance['opportunities_executed'] += 1
-        
-        if result.actual_profit > 0:
-            performance['total_profit'] += result.actual_profit
-        else:
-            performance['total_loss'] += abs(result.actual_profit)
-    
-    # Update success rate
-    if performance['opportunities_found'] > 0:
-        performance['success_rate'] = (
-            performance['opportunities_executed'] / performance['opportunities_found'] * 100
-        )
-    
-    # Update average profit per trade
-    if performance['opportunities_executed'] > 0:
-        net_profit = performance['total_profit'] - performance['total_loss']
-        performance['avg_profit_per_trade'] = net_profit / performance['opportunities_executed']
-    
-    # Track execution times
-    performance['execution_times'].append(result.execution_time)
-    if len(performance['execution_times']) > 100:  # Keep last 100
-        performance['execution_times'] = performance['execution_times'][-100:]
-
-def _update_strategy_error_count(self, strategy_name: str) -> None:
-    """Update strategy error count"""
-    if strategy_name in self.strategy_performance:
-        self.strategy_performance[strategy_name]['error_count'] += 1
-
-# Management and control methods
-def enable_strategy(self, strategy_name: str) -> bool:
-    """Enable a strategy"""
-    if strategy_name in self.strategies:
-        strategy = self.strategies[strategy_name]
-        strategy.enabled = True
-        if strategy_name not in self.enabled_strategies:
-            self.enabled_strategies.append(strategy_name)
-        
-        logger.info("strategy_enabled", strategy_name=strategy_name)
-        return True
-    return False
-
-def disable_strategy(self, strategy_name: str) -> bool:
-    """Disable a strategy"""
-    if strategy_name in self.strategies:
-        strategy = self.strategies[strategy_name]
-        strategy.enabled = False
-        if strategy_name in self.enabled_strategies:
-            self.enabled_strategies.remove(strategy_name)
-        
-        logger.info("strategy_disabled", strategy_name=strategy_name)
-        return True
-    return False
-
-def update_strategy_config(self, strategy_name: str, new_config: Dict[str, Any]) -> bool:
-    """Update strategy configuration"""
-    if strategy_name not in self.strategies:
-        return False
-    
-    try:
-        strategy = self.strategies[strategy_name]
-        strategy.update_config(new_config)
-        
-        logger.info("strategy_config_updated",
-                   strategy_name=strategy_name,
-                   config=new_config)
-        return True
-        
-    except Exception as e:
-        logger.error("strategy_config_update_failed",
-                    strategy_name=strategy_name,
-                    error=str(e))
-        return False
-
-async def cancel_active_opportunities(self, strategy_name: Optional[str] = None) -> int:
-    """Cancel active opportunities, optionally filtered by strategy"""
-    cancelled_count = 0
-    
-    opportunities_to_cancel = []
-    for opp_id, opportunity in self.active_opportunities.items():
-        if strategy_name is None or opportunity.strategy_name == strategy_name:
-            opportunities_to_cancel.append(opp_id)
-    
-    for opp_id in opportunities_to_cancel:
-        try:
-            # Cancel execution if running
-            if opp_id in self.executing_opportunities:
-                task = self.executing_opportunities[opp_id]
-                if not task.done():
-                    task.cancel()
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        pass
-            
-            # Update opportunity status
-            opportunity = self.active_opportunities.get(opp_id)
-            if opportunity:
-                opportunity.update_status(OpportunityStatus.FAILED)
-            
-            # Clean up
-            await self._cleanup_failed_opportunity(opportunity)
-            cancelled_count += 1
-            
-        except Exception as e:
-            logger.error("opportunity_cancellation_failed",
-                       opportunity_id=opp_id,
-                       error=str(e))
-    
-    logger.info("active_opportunities_cancelled",
-               count=cancelled_count,
-               strategy_filter=strategy_name)
-    
-    return cancelled_count
-
-# Status and reporting methods
-async def get_strategy_stats(self) -> Dict[str, Any]:
-    """Get comprehensive strategy statistics"""
-    
-    # Overall statistics
-    overall_stats = {
-        'total_strategies': len(self.strategies),
-        'enabled_strategies': len(self.enabled_strategies),
-        'total_opportunities_found': self.total_opportunities_found,
-        'total_opportunities_executed': self.total_opportunities_executed,
-        'total_profit': float(self.total_profit),
-        'total_loss': float(self.total_loss),
-        'net_profit': float(self.total_profit - self.total_loss),
-        'overall_success_rate': (
-            self.total_opportunities_executed / max(self.total_opportunities_found, 1) * 100
-        ),
-        'active_opportunities': len(self.active_opportunities),
-        'max_concurrent_opportunities': self.max_concurrent_opportunities
-    }
-    
-    # Individual strategy statistics
-    strategy_stats = {}
-    for strategy_name, strategy in self.strategies.items():
-        performance = self.strategy_performance.get(strategy_name, {})
-        
-        # Get strategy-specific stats
-        strategy_specific_stats = {}
-        if hasattr(strategy, 'get_strategy_stats'):
-            strategy_specific_stats = strategy.get_strategy_stats()
-        
-        # Calculate average execution time
-        avg_execution_time = 0.0
-        execution_times = performance.get('execution_times', [])
-        if execution_times:
-            avg_execution_time = sum(execution_times) / len(execution_times)
-        
-        strategy_stats[strategy_name] = {
-            'enabled': strategy.enabled,
-            'priority': strategy.priority,
-            'opportunities_found': performance.get('opportunities_found', 0),
-            'opportunities_executed': performance.get('opportunities_executed', 0),
-            'total_profit': float(performance.get('total_profit', 0)),
-            'total_loss': float(performance.get('total_loss', 0)),
-            'net_profit': float(
-                performance.get('total_profit', 0) - performance.get('total_loss', 0)
-            ),
-            'success_rate': performance.get('success_rate', 0.0),
-            'avg_profit_per_trade': float(performance.get('avg_profit_per_trade', 0)),
-            'avg_execution_time': avg_execution_time,
-            'error_count': performance.get('error_count', 0),
-            'last_scan_time': self.last_scan_times.get(strategy_name, 0),
-            'strategy_specific': strategy_specific_stats
-        }
-    
-    return {
-        'overall': overall_stats,
-        'strategies': strategy_stats,
-        'timestamp': time.time()
-    }
-
-async def get_detailed_stats(self) -> Dict[str, Any]:
-    """Get detailed statistics for analysis"""
-    stats = await self.get_strategy_stats()
-    
-    # Add detailed information
-    stats['detailed'] = {
-        'active_opportunities': [
-            {
-                'opportunity_id': opp.opportunity_id,
-                'strategy': opp.strategy_name,
-                'symbol': opp.symbol,
-                'expected_profit': float(opp.expected_profit),
-                'confidence_level': opp.confidence_level,
-                'risk_score': opp.risk_score,
-                'time_remaining': max(0, opp.valid_until - time.time())
-            }
-            for opp in self.active_opportunities.values()
-        ],
-        'strategy_configs': {
-            name: strategy.get_config() 
-            for name, strategy in self.strategies.items()
-        },
-        'execution_queue_size': len(self.execution_queue),
-        'executing_count': len(self.executing_opportunities)
-    }
-    
-    return stats
-
-def get_active_opportunities(self) -> List[Dict[str, Any]]:
-    """Get list of currently active opportunities"""
-    return [
-        {
-            'opportunity_id': opp.opportunity_id,
-            'strategy_name': opp.strategy_name,
-            'symbol': opp.symbol,
-            'amount': float(opp.amount),
-            'expected_profit': float(opp.expected_profit),
-            'expected_profit_percent': float(opp.expected_profit_percent),
-            'confidence_level': opp.confidence_level,
-            'risk_score': opp.risk_score,
-            'status': opp.status.value,
-            'timestamp': opp.timestamp,
-            'valid_until': opp.valid_until,
-            'time_remaining': max(0, opp.valid_until - time.time())
-        }
-        for opp in self.active_opportunities.values()
-    ]
-
-def get_strategy_list(self) -> List[Dict[str, Any]]:
-    """Get list of all strategies with their basic info"""
-    return [
-        {
-            'name': strategy.name,
-            'enabled': strategy.enabled,
-            'priority': strategy.priority,
-            'type': type(strategy).__name__,
-            'last_scan': self.last_scan_times.get(strategy.name, 0),
-            'scan_frequency': strategy.scan_frequency,
-            'opportunities_found': self.strategy_performance.get(strategy.name, {}).get('opportunities_found', 0),
-            'opportunities_executed': self.strategy_performance.get(strategy.name, {}).get('opportunities_executed', 0)
-        }
-        for strategy in self.strategies.values()
-    ]
-
-async def emergency_stop_all_strategies(self) -> None:
-    """Emergency stop all strategy operations"""
-    logger.critical("emergency_stop_all_strategies_triggered")
-    
-    try:
-        # Disable all strategies
-        for strategy_name in list(self.enabled_strategies):
-            self.disable_strategy(strategy_name)
-        
-        # Cancel all active opportunities
-        cancelled_count = await self.cancel_active_opportunities()
-        
-        logger.critical("emergency_stop_completed",
-                       strategies_disabled=len(self.strategies),
-                       opportunities_cancelled=cancelled_count)
-        
-    except Exception as e:
-        logger.critical("emergency_stop_failed", error=str(e))
-
-def reset_performance_metrics(self) -> None:
-    """Reset all performance metrics"""
-    self.total_opportunities_found = 0
-    self.total_opportunities_executed = 0
-    self.total_profit = Decimal('0')
-    self.total_loss = Decimal('0')
-    
-    # Reset strategy performance
-    for strategy_name in self.strategy_performance:
-        self.strategy_performance[strategy_name] = {
-            'opportunities_found': 0,
-            'opportunities_executed': 0,
-            'total_profit': Decimal('0'),
-            'total_loss': Decimal('0'),
-            'success_rate': 0.0,
-            'avg_profit_per_trade': Decimal('0'),
-            'last_opportunity_time': 0,
-            'execution_times': [],
-            'error_count': 0
-        }
-    
-    logger.info("performance_metrics_reset")
-
-def get_manager_status(self) -> Dict[str, Any]:
+def get_status(self) -> Dict[str, Any]:
     """Get strategy manager status"""
     return {
-        'total_strategies': len(self.strategies),
-        'enabled_strategies': len(self.enabled_strategies),
-        'active_opportunities': len(self.active_opportunities),
-        'execution_queue_size': len(self.execution_queue),
-        'executing_count': len(self.executing_opportunities),
-        'max_concurrent_opportunities': self.max_concurrent_opportunities,
-        'scan_interval': self.scan_interval,
+        'running': self.running,
+        'active_strategies': list(self.strategies.keys()),
         'total_opportunities_found': self.total_opportunities_found,
-        'total_opportunities_executed': self.total_opportunities_executed,
-        'total_profit': float(self.total_profit),
-        'total_loss': float(self.total_loss),
-        'net_profit': float(self.total_profit - self.total_loss)
+        'successful_trades': self.successful_trades,
+        'failed_trades': self.failed_trades,
+        'success_rate': (self.successful_trades / max(self.successful_trades + self.failed_trades, 1)) * 100,
+        'active_opportunities': len(self.active_opportunities)
     }
 ```
