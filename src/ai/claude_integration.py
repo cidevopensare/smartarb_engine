@@ -1,628 +1,712 @@
-"""
+“””
 Claude AI Integration for SmartArb Engine
-Intelligent analysis, optimization, and code updates
-"""
+Advanced AI analysis and optimization system using Anthropic’s Claude
+“””
 
 import asyncio
-import aiohttp
 import json
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Union
 from dataclasses import dataclass, asdict
+from enum import Enum
+import time
 from datetime import datetime, timedelta
-from decimal import Decimal
 import structlog
-from pathlib import Path
+import anthropic
+from anthropic import AsyncAnthropic
 
-from ..utils.config import ConfigManager
-from ..db.connection import DatabaseManager
-from ..core.risk_manager import RiskManager
-from ..core.portfolio_manager import PortfolioManager
+logger = structlog.get_logger(**name**)
 
-logger = structlog.get_logger(__name__)
+class AnalysisType(Enum):
+“”“Types of AI analysis”””
+PERFORMANCE_ANALYSIS = “performance_analysis”
+RISK_ASSESSMENT = “risk_assessment”
+STRATEGY_OPTIMIZATION = “strategy_optimization”
+MARKET_ANALYSIS = “market_analysis”
+ERROR_ANALYSIS = “error_analysis”
+PORTFOLIO_OPTIMIZATION = “portfolio_optimization”
+EMERGENCY_ANALYSIS = “emergency_analysis”
+DAILY_SUMMARY = “daily_summary”
 
-
-@dataclass
-class PerformanceReport:
-    """Structured performance report for Claude analysis"""
-    period: str
-    total_trades: int
-    successful_trades: int
-    total_profit: float
-    total_fees: float
-    success_rate: float
-    profit_per_trade: float
-    max_drawdown: float
-    sharpe_ratio: float
-    exchange_performance: Dict[str, Dict[str, float]]
-    strategy_performance: Dict[str, Dict[str, float]]
-    risk_metrics: Dict[str, float]
-    market_conditions: Dict[str, Any]
-    issues_detected: List[str]
-    opportunities_missed: int
-    execution_latency_avg: float
-
+class RecommendationType(Enum):
+“”“Types of AI recommendations”””
+PARAMETER_ADJUSTMENT = “parameter_adjustment”
+STRATEGY_MODIFICATION = “strategy_modification”
+RISK_CONTROL = “risk_control”
+PORTFOLIO_REBALANCING = “portfolio_rebalancing”
+SYSTEM_IMPROVEMENT = “system_improvement”
+EMERGENCY_ACTION = “emergency_action”
+CODE_UPDATE = “code_update”
 
 @dataclass
-class ClaudeRecommendation:
-    """Claude's recommendation structure"""
-    category: str  # 'risk', 'strategy', 'technical', 'market'
-    priority: str  # 'low', 'medium', 'high', 'critical'
-    title: str
-    description: str
-    code_changes: Optional[List[Dict[str, str]]] = None
-    config_changes: Optional[Dict[str, Any]] = None
-    implementation_plan: Optional[List[str]] = None
-    expected_impact: Optional[str] = None
-    risks: Optional[List[str]] = None
+class AnalysisContext:
+“”“Context data for AI analysis”””
+analysis_type: AnalysisType
+time_range: str
+focus_areas: List[str]
+performance_data: Dict[str, Any]
+risk_metrics: Dict[str, Any]
+market_data: Dict[str, Any]
+system_state: Dict[str, Any]
+recent_events: List[Dict[str, Any]]
 
-
-class ClaudeAnalysisEngine:
-    """
-    Claude AI Integration for SmartArb Engine
-    
-    Features:
-    - Automated performance analysis
-    - Intelligent optimization suggestions
-    - Code update recommendations
-    - Market analysis and insights
-    - Risk assessment and alerts
-    """
-    
-    def __init__(self, config: ConfigManager, db_manager: DatabaseManager):
-        self.config = config
-        self.db_manager = db_manager
-        
-        # Claude API configuration
-        self.claude_api_key = config.get('ai.claude_api_key')
-        self.claude_api_url = config.get('ai.claude_api_url', 'https://api.anthropic.com/v1/messages')
-        self.model = config.get('ai.model', 'claude-3-sonnet-20240229')
-        
-        # Analysis settings
-        self.analysis_frequency = config.get('ai.analysis_frequency', 'daily')  # hourly, daily, weekly
-        self.auto_apply_safe_changes = config.get('ai.auto_apply_safe_changes', False)
-        self.min_confidence_threshold = config.get('ai.min_confidence_threshold', 0.8)
-        
-        # Report storage
-        self.reports_dir = Path('data/ai_reports')
-        self.reports_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Performance tracking
-        self.last_analysis_time = None
-        self.analysis_history: List[Dict[str, Any]] = []
-        
-        logger.info("claude_integration_initialized",
-                   model=self.model,
-                   frequency=self.analysis_frequency)
-    
-    async def run_automated_analysis(self) -> Optional[List[ClaudeRecommendation]]:
-        """
-        Run automated performance analysis and get recommendations
-        """
-        try:
-            logger.info("starting_automated_analysis")
-            
-            # Generate comprehensive performance report
-            report = await self._generate_performance_report()
-            
-            # Analyze market conditions
-            market_analysis = await self._analyze_market_conditions()
-            
-            # Get Claude's analysis and recommendations
-            recommendations = await self._get_claude_recommendations(report, market_analysis)
-            
-            # Process and validate recommendations
-            validated_recommendations = await self._validate_recommendations(recommendations)
-            
-            # Apply safe changes automatically (if enabled)
-            if self.auto_apply_safe_changes:
-                await self._apply_safe_recommendations(validated_recommendations)
-            
-            # Store analysis results
-            await self._store_analysis_results(report, validated_recommendations)
-            
-            # Update tracking
-            self.last_analysis_time = datetime.now()
-            
-            logger.info("automated_analysis_completed",
-                       recommendations_count=len(validated_recommendations))
-            
-            return validated_recommendations
-            
-        except Exception as e:
-            logger.error("automated_analysis_failed", error=str(e))
-            return None
-    
-    async def _generate_performance_report(self) -> PerformanceReport:
-        """Generate comprehensive performance report"""
-        
-        # Time period for analysis
-        end_time = datetime.now()
-        start_time = end_time - timedelta(days=7)  # Last 7 days
-        
-        async with self.db_manager.get_session() as session:
-            # Get opportunities data
-            opportunities = session.query(Opportunity).filter(
-                Opportunity.detected_at >= start_time,
-                Opportunity.detected_at <= end_time
-            ).all()
-            
-            # Calculate basic metrics
-            total_trades = len([opp for opp in opportunities if opp.status == 'completed'])
-            successful_trades = len([opp for opp in opportunities 
-                                   if opp.status == 'completed' and opp.actual_profit > 0])
-            
-            total_profit = sum(float(opp.actual_profit or 0) for opp in opportunities 
-                             if opp.status == 'completed')
-            total_fees = sum(float(opp.actual_fees or 0) for opp in opportunities 
-                           if opp.status == 'completed')
-            
-            success_rate = (successful_trades / max(total_trades, 1)) * 100
-            profit_per_trade = total_profit / max(total_trades, 1)
-            
-            # Exchange performance breakdown
-            exchange_performance = {}
-            for exchange in ['kraken', 'bybit', 'mexc']:
-                exchange_opps = [opp for opp in opportunities 
-                               if opp.buy_exchange.name == exchange or opp.sell_exchange.name == exchange]
-                exchange_profit = sum(float(opp.actual_profit or 0) for opp in exchange_opps 
-                                    if opp.status == 'completed')
-                exchange_performance[exchange] = {
-                    'trades': len(exchange_opps),
-                    'profit': exchange_profit,
-                    'success_rate': len([opp for opp in exchange_opps if opp.actual_profit > 0]) / max(len(exchange_opps), 1) * 100
-                }
-            
-            # Strategy performance
-            strategy_performance = {}
-            strategies = set(opp.strategy_name for opp in opportunities)
-            for strategy in strategies:
-                strategy_opps = [opp for opp in opportunities if opp.strategy_name == strategy]
-                strategy_profit = sum(float(opp.actual_profit or 0) for opp in strategy_opps 
-                                    if opp.status == 'completed')
-                strategy_performance[strategy] = {
-                    'trades': len(strategy_opps),
-                    'profit': strategy_profit,
-                    'avg_profit_pct': sum(float(opp.expected_profit_percentage or 0) for opp in strategy_opps) / max(len(strategy_opps), 1)
-                }
-            
-            # Risk metrics
-            profits = [float(opp.actual_profit or 0) for opp in opportunities 
-                      if opp.status == 'completed' and opp.actual_profit is not None]
-            max_drawdown = min(profits) if profits else 0
-            
-            # Calculate Sharpe ratio (simplified)
-            if profits:
-                avg_return = sum(profits) / len(profits)
-                volatility = (sum((p - avg_return) ** 2 for p in profits) / len(profits)) ** 0.5
-                sharpe_ratio = avg_return / max(volatility, 0.01)  # Avoid division by zero
-            else:
-                sharpe_ratio = 0
-            
-            # Issues detection
-            issues_detected = []
-            if success_rate < 70:
-                issues_detected.append(f"Low success rate: {success_rate:.1f}%")
-            if profit_per_trade < 0.1:
-                issues_detected.append(f"Low profit per trade: ${profit_per_trade:.4f}")
-            if max_drawdown < -50:
-                issues_detected.append(f"High drawdown detected: ${max_drawdown:.2f}")
-            
-            # Missed opportunities
-            opportunities_missed = len([opp for opp in opportunities 
-                                      if opp.status in ['failed', 'expired']])
-            
-            # Average execution latency
-            execution_times = [opp.execution_time_ms for opp in opportunities 
-                             if opp.execution_time_ms is not None]
-            execution_latency_avg = sum(execution_times) / max(len(execution_times), 1) if execution_times else 0
-            
-            return PerformanceReport(
-                period=f"{start_time.strftime('%Y-%m-%d')} to {end_time.strftime('%Y-%m-%d')}",
-                total_trades=total_trades,
-                successful_trades=successful_trades,
-                total_profit=total_profit,
-                total_fees=total_fees,
-                success_rate=success_rate,
-                profit_per_trade=profit_per_trade,
-                max_drawdown=max_drawdown,
-                sharpe_ratio=sharpe_ratio,
-                exchange_performance=exchange_performance,
-                strategy_performance=strategy_performance,
-                risk_metrics={
-                    'max_drawdown': max_drawdown,
-                    'sharpe_ratio': sharpe_ratio,
-                    'volatility': volatility if 'volatility' in locals() else 0
-                },
-                market_conditions={},  # Will be filled by market analysis
-                issues_detected=issues_detected,
-                opportunities_missed=opportunities_missed,
-                execution_latency_avg=execution_latency_avg
-            )
-    
-    async def _analyze_market_conditions(self) -> Dict[str, Any]:
-        """Analyze current market conditions"""
-        
-        # This would integrate with market data APIs
-        # For now, return basic structure
-        return {
-            'volatility_level': 'medium',
-            'trend': 'sideways',
-            'volume_24h': 'normal',
-            'spread_opportunities': 'moderate',
-            'risk_factors': ['exchange_latency', 'low_liquidity_periods']
-        }
-    
-    async def _get_claude_recommendations(self, report: PerformanceReport, 
-                                        market_analysis: Dict[str, Any]) -> List[ClaudeRecommendation]:
-        """Get recommendations from Claude AI"""
-        
-        if not self.claude_api_key:
-            logger.warning("claude_api_key_not_configured")
-            return []
-        
-        # Prepare analysis prompt
-        analysis_prompt = self._build_analysis_prompt(report, market_analysis)
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                headers = {
-                    'Authorization': f'Bearer {self.claude_api_key}',
-                    'Content-Type': 'application/json',
-                    'x-api-key': self.claude_api_key
-                }
-                
-                payload = {
-                    'model': self.model,
-                    'max_tokens': 4000,
-                    'messages': [
-                        {
-                            'role': 'user',
-                            'content': analysis_prompt
-                        }
-                    ]
-                }
-                
-                async with session.post(self.claude_api_url, 
-                                      headers=headers, 
-                                      json=payload) as response:
-                    
-                    if response.status == 200:
-                        result = await response.json()
-                        claude_response = result['content'][0]['text']
-                        
-                        # Parse Claude's response into structured recommendations
-                        return self._parse_claude_response(claude_response)
-                    else:
-                        error_text = await response.text()
-                        logger.error("claude_api_error", 
-                                   status=response.status, 
-                                   error=error_text)
-                        return []
-                        
-        except Exception as e:
-            logger.error("claude_api_request_failed", error=str(e))
-            return []
-    
-    def _build_analysis_prompt(self, report: PerformanceReport, 
-                             market_analysis: Dict[str, Any]) -> str:
-        """Build comprehensive analysis prompt for Claude"""
-        
-        return f"""
-You are an expert quantitative trading analyst for SmartArb Engine, a cryptocurrency arbitrage trading system. 
-
-Analyze the following performance report and provide actionable recommendations for optimization:
-
-## PERFORMANCE REPORT
-Period: {report.period}
-- Total Trades: {report.total_trades}
-- Successful Trades: {report.successful_trades}
-- Success Rate: {report.success_rate:.1f}%
-- Total Profit: ${report.total_profit:.4f}
-- Profit per Trade: ${report.profit_per_trade:.4f}
-- Max Drawdown: ${report.max_drawdown:.4f}
-- Sharpe Ratio: {report.sharpe_ratio:.2f}
-
-## EXCHANGE PERFORMANCE
-{json.dumps(report.exchange_performance, indent=2)}
-
-## STRATEGY PERFORMANCE  
-{json.dumps(report.strategy_performance, indent=2)}
-
-## ISSUES DETECTED
-{', '.join(report.issues_detected) if report.issues_detected else 'None'}
-
-## MARKET CONDITIONS
-{json.dumps(market_analysis, indent=2)}
-
-## TECHNICAL METRICS
-- Opportunities Missed: {report.opportunities_missed}
-- Average Execution Latency: {report.execution_latency_avg:.1f}ms
-
-Please provide your analysis in this EXACT JSON format:
-
-```json
-{{
-  "recommendations": [
-    {{
-      "category": "risk|strategy|technical|market",
-      "priority": "low|medium|high|critical", 
-      "title": "Brief title",
-      "description": "Detailed explanation",
-      "code_changes": [
-        {{
-          "file": "path/to/file.py",
-          "function": "function_name", 
-          "change_type": "modify_parameter|add_logic|optimize",
-          "current_value": "current setting",
-          "suggested_value": "new setting",
-          "reason": "why this change helps"
-        }}
-      ],
-      "config_changes": {{
-        "section.parameter": "new_value"
-      }},
-      "implementation_plan": ["step 1", "step 2"],
-      "expected_impact": "Expected improvement description",
-      "risks": ["potential risk 1", "potential risk 2"]
-    }}
-  ],
-  "summary": "Overall assessment and key insights",
-  "confidence_score": 0.85
-}}
+```
+def to_dict(self) -> Dict[str, Any]:
+    return asdict(self)
 ```
 
-Focus on:
-1. Performance optimization opportunities
-2. Risk management improvements  
-3. Strategy parameter tuning
-4. Technical optimizations
-5. Market-specific adaptations
+@dataclass
+class AIRecommendation:
+“”“AI-generated recommendation”””
+id: str
+type: RecommendationType
+priority: str  # “low”, “medium”, “high”, “critical”
+confidence: float  # 0.0 to 1.0
+title: str
+description: str
+action_items: List[str]
+expected_impact: str
+risks: List[str]
+implementation_steps: List[str]
+parameters: Dict[str, Any]
+code_changes: Optional[Dict[str, str]] = None
+expiry_time: Optional[float] = None
 
-Be specific with numeric recommendations and code changes.
+```
+def to_dict(self) -> Dict[str, Any]:
+    return asdict(self)
+
+@property
+def is_expired(self) -> bool:
+    if self.expiry_time:
+        return time.time() > self.expiry_time
+    return False
+```
+
+@dataclass
+class AnalysisResult:
+“”“Result of AI analysis”””
+analysis_id: str
+analysis_type: AnalysisType
+timestamp: float
+processing_time: float
+success: bool
+summary: str
+detailed_analysis: str
+recommendations: List[AIRecommendation]
+insights: List[str]
+warnings: List[str]
+data_quality_score: float
+confidence_score: float
+
+```
+def to_dict(self) -> Dict[str, Any]:
+    result = asdict(self)
+    result['analysis_type'] = self.analysis_type.value
+    result['recommendations'] = [rec.to_dict() for rec in self.recommendations]
+    return result
+```
+
+class ClaudeAnalysisEngine:
+“””
+Advanced AI Analysis Engine using Claude
+
+```
+Features:
+- Performance analysis and optimization suggestions
+- Risk assessment and mitigation strategies
+- Market trend analysis
+- Code optimization recommendations
+- Emergency situation analysis
+- Automated report generation
 """
+
+def __init__(self, config: Dict[str, Any], db_manager=None):
+    self.config = config
+    self.db_manager = db_manager
     
-    def _parse_claude_response(self, response: str) -> List[ClaudeRecommendation]:
-        """Parse Claude's JSON response into recommendation objects"""
-        
-        try:
-            # Extract JSON from response
-            start_idx = response.find('```json')
-            end_idx = response.find('```', start_idx + 7)
-            
-            if start_idx != -1 and end_idx != -1:
-                json_str = response[start_idx + 7:end_idx].strip()
-                parsed = json.loads(json_str)
-                
-                recommendations = []
-                for rec_data in parsed.get('recommendations', []):
-                    recommendation = ClaudeRecommendation(
-                        category=rec_data['category'],
-                        priority=rec_data['priority'],
-                        title=rec_data['title'],
-                        description=rec_data['description'],
-                        code_changes=rec_data.get('code_changes'),
-                        config_changes=rec_data.get('config_changes'),
-                        implementation_plan=rec_data.get('implementation_plan'),
-                        expected_impact=rec_data.get('expected_impact'),
-                        risks=rec_data.get('risks')
-                    )
-                    recommendations.append(recommendation)
-                
-                logger.info("claude_response_parsed", 
-                          recommendations_count=len(recommendations))
-                return recommendations
-            else:
-                logger.warning("no_json_found_in_claude_response")
-                return []
-                
-        except Exception as e:
-            logger.error("claude_response_parsing_failed", error=str(e))
-            return []
+    # AI configuration
+    ai_config = config.get('ai', {})
+    claude_config = ai_config.get('claude', {})
     
-    async def _validate_recommendations(self, recommendations: List[ClaudeRecommendation]) -> List[ClaudeRecommendation]:
-        """Validate and filter recommendations based on safety and feasibility"""
-        
-        validated = []
-        
-        for rec in recommendations:
-            # Safety checks
-            if rec.priority == 'critical' and not rec.risks:
-                logger.warning("critical_recommendation_without_risks", title=rec.title)
-                continue
-            
-            # Code change validation
-            if rec.code_changes:
-                for change in rec.code_changes:
-                    if not self._validate_code_change(change):
-                        logger.warning("unsafe_code_change_detected", 
-                                     file=change.get('file'),
-                                     function=change.get('function'))
-                        continue
-            
-            # Config change validation
-            if rec.config_changes:
-                if not self._validate_config_changes(rec.config_changes):
-                    logger.warning("invalid_config_changes", changes=rec.config_changes)
-                    continue
-            
-            validated.append(rec)
-        
-        logger.info("recommendations_validated", 
-                   original=len(recommendations),
-                   validated=len(validated))
-        
-        return validated
+    self.api_key = claude_config.get('api_key', '')
+    self.model = claude_config.get('model', 'claude-3-sonnet-20240229')
+    self.max_tokens = claude_config.get('max_tokens', 4096)
+    self.temperature = claude_config.get('temperature', 0.1)
     
-    def _validate_code_change(self, change: Dict[str, str]) -> bool:
-        """Validate individual code change for safety"""
-        
-        # Check if file exists and is part of our codebase
-        file_path = Path(change.get('file', ''))
-        if not file_path.exists() or not str(file_path).startswith('src/'):
-            return False
-        
-        # Blacklist dangerous operations
-        dangerous_patterns = [
-            'exec', 'eval', '__import__', 'subprocess', 'os.system',
-            'rm -rf', 'DELETE FROM', 'DROP TABLE'
-        ]
-        
-        suggested_value = change.get('suggested_value', '').lower()
-        for pattern in dangerous_patterns:
-            if pattern.lower() in suggested_value:
-                return False
-        
-        return True
+    # Analysis settings
+    analysis_config = ai_config.get('analysis', {})
+    self.enabled = analysis_config.get('enabled', True)
+    self.confidence_threshold = analysis_config.get('confidence_threshold', 0.8)
     
-    def _validate_config_changes(self, changes: Dict[str, Any]) -> bool:
-        """Validate configuration changes"""
+    # Initialize Claude client
+    if self.api_key:
+        self.claude_client = AsyncAnthropic(api_key=self.api_key)
+    else:
+        self.claude_client = None
+        logger.warning("claude_api_key_missing")
+    
+    # Analysis tracking
+    self.analysis_history: List[AnalysisResult] = []
+    self.active_recommendations: List[AIRecommendation] = []
+    self.analysis_count = 0
+    
+    # Performance tracking
+    self.total_analysis_time = 0.0
+    self.successful_analyses = 0
+    self.failed_analyses = 0
+    
+    logger.info("claude_analysis_engine_initialized",
+               enabled=self.enabled,
+               model=self.model,
+               has_api_key=bool(self.api_key))
+
+async def analyze(self, context: AnalysisContext) -> AnalysisResult:
+    """
+    Perform AI analysis based on context
+    """
+    if not self.enabled or not self.claude_client:
+        return self._create_disabled_result(context)
+    
+    analysis_id = f"analysis_{int(time.time())}_{self.analysis_count}"
+    self.analysis_count += 1
+    start_time = time.time()
+    
+    try:
+        logger.info("claude_analysis_started",
+                   analysis_id=analysis_id,
+                   type=context.analysis_type.value)
         
-        # Define safe config parameters
-        safe_parameters = {
-            'risk_management.min_profit_threshold',
-            'risk_management.max_position_size', 
-            'trading.order_timeout',
-            'strategies.spatial_arbitrage.scan_interval',
-            'engine.update_interval'
+        # Prepare analysis prompt
+        prompt = self._create_analysis_prompt(context)
+        
+        # Call Claude API
+        response = await self.claude_client.messages.create(
+            model=self.model,
+            max_tokens=self.max_tokens,
+            temperature=self.temperature,
+            messages=[
+                {"role": "user", "content": prompt}
+            ]
+        )
+        
+        # Parse response
+        response_text = response.content[0].text
+        analysis_data = self._parse_claude_response(response_text, context)
+        
+        # Create analysis result
+        processing_time = time.time() - start_time
+        result = AnalysisResult(
+            analysis_id=analysis_id,
+            analysis_type=context.analysis_type,
+            timestamp=time.time(),
+            processing_time=processing_time,
+            success=True,
+            summary=analysis_data.get('summary', ''),
+            detailed_analysis=analysis_data.get('detailed_analysis', ''),
+            recommendations=analysis_data.get('recommendations', []),
+            insights=analysis_data.get('insights', []),
+            warnings=analysis_data.get('warnings', []),
+            data_quality_score=analysis_data.get('data_quality_score', 0.8),
+            confidence_score=analysis_data.get('confidence_score', 0.7)
+        )
+        
+        # Update tracking
+        self.analysis_history.append(result)
+        self.successful_analyses += 1
+        self.total_analysis_time += processing_time
+        
+        # Update active recommendations
+        self._update_active_recommendations(result.recommendations)
+        
+        logger.info("claude_analysis_completed",
+                   analysis_id=analysis_id,
+                   processing_time=processing_time,
+                   recommendations=len(result.recommendations),
+                   confidence=result.confidence_score)
+        
+        return result
+        
+    except Exception as e:
+        processing_time = time.time() - start_time
+        self.failed_analyses += 1
+        
+        logger.error("claude_analysis_failed",
+                    analysis_id=analysis_id,
+                    error=str(e),
+                    processing_time=processing_time)
+        
+        return AnalysisResult(
+            analysis_id=analysis_id,
+            analysis_type=context.analysis_type,
+            timestamp=time.time(),
+            processing_time=processing_time,
+            success=False,
+            summary=f"Analysis failed: {str(e)}",
+            detailed_analysis="",
+            recommendations=[],
+            insights=[],
+            warnings=[f"Analysis failed due to error: {str(e)}"],
+            data_quality_score=0.0,
+            confidence_score=0.0
+        )
+
+def _create_analysis_prompt(self, context: AnalysisContext) -> str:
+    """Create detailed prompt for Claude analysis"""
+    
+    base_prompt = f"""
+```
+
+You are an expert quantitative analyst and trading system optimization specialist analyzing the SmartArb Engine cryptocurrency arbitrage trading system.
+
+ANALYSIS REQUEST:
+Type: {context.analysis_type.value}
+Time Range: {context.time_range}
+Focus Areas: {’, ’.join(context.focus_areas)}
+
+CURRENT SYSTEM DATA:
+“””
+
+```
+    # Add performance data
+    if context.performance_data:
+        base_prompt += f"\nPERFORMANCE METRICS:\n{json.dumps(context.performance_data, indent=2)}\n"
+    
+    # Add risk metrics
+    if context.risk_metrics:
+        base_prompt += f"\nRISK METRICS:\n{json.dumps(context.risk_metrics, indent=2)}\n"
+    
+    # Add market data
+    if context.market_data:
+        base_prompt += f"\nMARKET CONDITIONS:\n{json.dumps(context.market_data, indent=2)}\n"
+    
+    # Add system state
+    if context.system_state:
+        base_prompt += f"\nSYSTEM STATE:\n{json.dumps(context.system_state, indent=2)}\n"
+    
+    # Add recent events
+    if context.recent_events:
+        base_prompt += f"\nRECENT EVENTS:\n{json.dumps(context.recent_events, indent=2)}\n"
+    
+    # Add analysis-specific instructions
+    analysis_instructions = self._get_analysis_instructions(context.analysis_type)
+    base_prompt += f"\nANALYSIS INSTRUCTIONS:\n{analysis_instructions}\n"
+    
+    # Response format
+    base_prompt += """
+```
+
+REQUIRED RESPONSE FORMAT (JSON):
+{
+“summary”: “Brief 2-3 sentence summary of key findings”,
+“detailed_analysis”: “Comprehensive analysis with specific insights”,
+“recommendations”: [
+{
+“type”: “parameter_adjustment|strategy_modification|risk_control|portfolio_rebalancing|system_improvement|emergency_action|code_update”,
+“priority”: “low|medium|high|critical”,
+“confidence”: 0.0-1.0,
+“title”: “Clear recommendation title”,
+“description”: “Detailed description of the recommendation”,
+“action_items”: [“Specific actionable steps”],
+“expected_impact”: “Expected impact description”,
+“risks”: [“Potential risks”],
+“implementation_steps”: [“Step-by-step implementation”],
+“parameters”: {“key”: “value pairs for specific parameters to adjust”},
+“code_changes”: {“file_path”: “suggested code changes if applicable”}
+}
+],
+“insights”: [“Key insights discovered during analysis”],
+“warnings”: [“Important warnings or concerns”],
+“data_quality_score”: 0.0-1.0,
+“confidence_score”: 0.0-1.0
+}
+
+Provide actionable, specific recommendations with clear implementation steps. Focus on improving profitability, reducing risk, and optimizing system performance.
+“””
+
+```
+    return base_prompt
+
+def _get_analysis_instructions(self, analysis_type: AnalysisType) -> str:
+    """Get specific instructions for each analysis type"""
+    
+    instructions = {
+        AnalysisType.PERFORMANCE_ANALYSIS: """
+```
+
+Analyze trading performance metrics focusing on:
+
+- Profit/loss trends and patterns
+- Success rate optimization opportunities
+- Execution efficiency improvements
+- Strategy performance comparison
+- Identify underperforming areas
+- Recommend parameter adjustments for better results
+  “””,
+  
+  ```
+        AnalysisType.RISK_ASSESSMENT: """
+  ```
+
+Evaluate risk management effectiveness:
+
+- Current risk exposure levels
+- Risk-adjusted returns analysis
+- Identify risk concentration issues
+- Portfolio diversification assessment
+- Stress test scenario analysis
+- Recommend risk control improvements
+  “””,
+  
+  ```
+        AnalysisType.STRATEGY_OPTIMIZATION: """
+  ```
+
+Optimize trading strategies:
+
+- Strategy performance comparison
+- Parameter sensitivity analysis
+- Market condition adaptation
+- Entry/exit timing optimization
+- Position sizing optimization
+- Recommend strategy improvements
+  “””,
+  
+  ```
+        AnalysisType.MARKET_ANALYSIS: """
+  ```
+
+Analyze market conditions and opportunities:
+
+- Current market trends and patterns
+- Volatility analysis and impact
+- Cross-exchange spread analysis
+- Opportunity frequency patterns
+- Market timing recommendations
+- Adaptation strategies for market conditions
+  “””,
+  
+  ```
+        AnalysisType.ERROR_ANALYSIS: """
+  ```
+
+Investigate system errors and failures:
+
+- Error pattern identification
+- Root cause analysis
+- Impact assessment
+- Prevention strategies
+- System reliability improvements
+- Recommend fixes and preventive measures
+  “””,
+  
+  ```
+        AnalysisType.PORTFOLIO_OPTIMIZATION: """
+  ```
+
+Optimize portfolio allocation and management:
+
+- Asset allocation efficiency
+- Rebalancing opportunities
+- Correlation analysis
+- Concentration risk assessment
+- Capital efficiency improvements
+- Recommend portfolio adjustments
+  “””,
+  
+  ```
+        AnalysisType.EMERGENCY_ANALYSIS: """
+  ```
+
+Urgent analysis for critical situations:
+
+- Immediate threat assessment
+- Emergency response recommendations
+- Risk mitigation priorities
+- System protection measures
+- Recovery strategies
+- Provide immediate actionable steps
+  “””,
+  
+  ```
+        AnalysisType.DAILY_SUMMARY: """
+  ```
+
+Comprehensive daily performance review:
+
+- Day’s trading summary and highlights
+- Key performance indicators
+- Notable events and their impact
+- Areas of concern or improvement
+- Tomorrow’s focus areas
+- Daily optimization recommendations
+  “””
+  }
+  
+  ```
+    return instructions.get(analysis_type, "Provide comprehensive analysis and recommendations.")
+  ```
+  
+  def _parse_claude_response(self, response_text: str, context: AnalysisContext) -> Dict[str, Any]:
+  “”“Parse Claude’s JSON response”””
+  try:
+  # Extract JSON from response (may be wrapped in text)
+  json_start = response_text.find(’{’)
+  json_end = response_text.rfind(’}’) + 1
+  
+  ```
+        if json_start == -1 or json_end == 0:
+            raise ValueError("No JSON found in response")
+        
+        json_str = response_text[json_start:json_end]
+        data = json.loads(json_str)
+        
+        # Parse recommendations
+        recommendations = []
+        for rec_data in data.get('recommendations', []):
+            recommendation = AIRecommendation(
+                id=f"rec_{int(time.time())}_{len(recommendations)}",
+                type=RecommendationType(rec_data.get('type', 'system_improvement')),
+                priority=rec_data.get('priority', 'medium'),
+                confidence=float(rec_data.get('confidence', 0.7)),
+                title=rec_data.get('title', ''),
+                description=rec_data.get('description', ''),
+                action_items=rec_data.get('action_items', []),
+                expected_impact=rec_data.get('expected_impact', ''),
+                risks=rec_data.get('risks', []),
+                implementation_steps=rec_data.get('implementation_steps', []),
+                parameters=rec_data.get('parameters', {}),
+                code_changes=rec_data.get('code_changes'),
+                expiry_time=time.time() + 86400  # 24 hours
+            )
+            recommendations.append(recommendation)
+        
+        data['recommendations'] = recommendations
+        return data
+        
+    except Exception as e:
+        logger.error("claude_response_parsing_failed", error=str(e))
+        
+        # Return fallback analysis
+        return {
+            'summary': "Analysis completed but response parsing failed",
+            'detailed_analysis': response_text,
+            'recommendations': [],
+            'insights': [],
+            'warnings': [f"Response parsing failed: {str(e)}"],
+            'data_quality_score': 0.5,
+            'confidence_score': 0.3
+        }
+  ```
+  
+  def *create_disabled_result(self, context: AnalysisContext) -> AnalysisResult:
+  “”“Create result when AI is disabled”””
+  return AnalysisResult(
+  analysis_id=f”disabled*{int(time.time())}”,
+  analysis_type=context.analysis_type,
+  timestamp=time.time(),
+  processing_time=0.0,
+  success=False,
+  summary=“AI analysis is disabled”,
+  detailed_analysis=“Claude AI integration is not enabled or configured”,
+  recommendations=[],
+  insights=[],
+  warnings=[“AI analysis is disabled in configuration”],
+  data_quality_score=0.0,
+  confidence_score=0.0
+  )
+  
+  def _update_active_recommendations(self, new_recommendations: List[AIRecommendation]) -> None:
+  “”“Update list of active recommendations”””
+  # Remove expired recommendations
+  self.active_recommendations = [
+  rec for rec in self.active_recommendations
+  if not rec.is_expired
+  ]
+  
+  ```
+    # Add new recommendations
+    self.active_recommendations.extend(new_recommendations)
+    
+    # Sort by priority and confidence
+    priority_order = {'critical': 4, 'high': 3, 'medium': 2, 'low': 1}
+    self.active_recommendations.sort(
+        key=lambda r: (priority_order.get(r.priority, 0), r.confidence),
+        reverse=True
+    )
+    
+    # Limit to top 20 recommendations
+    self.active_recommendations = self.active_recommendations[:20]
+  ```
+  
+  # Convenience methods for specific analysis types
+  
+  async def analyze_performance(self, performance_data: Dict[str, Any],
+  time_range: str = “24h”) -> AnalysisResult:
+  “”“Perform performance analysis”””
+  context = AnalysisContext(
+  analysis_type=AnalysisType.PERFORMANCE_ANALYSIS,
+  time_range=time_range,
+  focus_areas=[“profitability”, “efficiency”, “success_rate”],
+  performance_data=performance_data,
+  risk_metrics={},
+  market_data={},
+  system_state={},
+  recent_events=[]
+  )
+  return await self.analyze(context)
+  
+  async def analyze_risk(self, risk_metrics: Dict[str, Any],
+  portfolio_data: Dict[str, Any] = None) -> AnalysisResult:
+  “”“Perform risk analysis”””
+  context = AnalysisContext(
+  analysis_type=AnalysisType.RISK_ASSESSMENT,
+  time_range=“current”,
+  focus_areas=[“risk_exposure”, “diversification”, “risk_controls”],
+  performance_data=portfolio_data or {},
+  risk_metrics=risk_metrics,
+  market_data={},
+  system_state={},
+  recent_events=[]
+  )
+  return await self.analyze(context)
+  
+  async def analyze_strategy(self, strategy_data: Dict[str, Any],
+  market_data: Dict[str, Any] = None) -> AnalysisResult:
+  “”“Perform strategy optimization analysis”””
+  context = AnalysisContext(
+  analysis_type=AnalysisType.STRATEGY_OPTIMIZATION,
+  time_range=“7d”,
+  focus_areas=[“strategy_performance”, “parameter_optimization”, “market_adaptation”],
+  performance_data=strategy_data,
+  risk_metrics={},
+  market_data=market_data or {},
+  system_state={},
+  recent_events=[]
+  )
+  return await self.analyze(context)
+  
+  async def emergency_analysis(self, system_state: Dict[str, Any],
+  recent_events: List[Dict[str, Any]]) -> AnalysisResult:
+  “”“Perform emergency analysis”””
+  context = AnalysisContext(
+  analysis_type=AnalysisType.EMERGENCY_ANALYSIS,
+  time_range=“1h”,
+  focus_areas=[“immediate_threats”, “risk_mitigation”, “system_protection”],
+  performance_data={},
+  risk_metrics={},
+  market_data={},
+  system_state=system_state,
+  recent_events=recent_events
+  )
+  return await self.analyze(context)
+  
+  async def daily_summary(self, full_system_data: Dict[str, Any]) -> AnalysisResult:
+  “”“Generate daily summary analysis”””
+  context = AnalysisContext(
+  analysis_type=AnalysisType.DAILY_SUMMARY,
+  time_range=“24h”,
+  focus_areas=[“daily_performance”, “key_events”, “optimization_opportunities”],
+  performance_data=full_system_data.get(‘performance’, {}),
+  risk_metrics=full_system_data.get(‘risk’, {}),
+  market_data=full_system_data.get(‘market’, {}),
+  system_state=full_system_data.get(‘system’, {}),
+  recent_events=full_system_data.get(‘events’, [])
+  )
+  return await self.analyze(context)
+  
+  # Recommendation management
+  
+  def get_active_recommendations(self, priority_filter: Optional[str] = None) -> List[AIRecommendation]:
+  “”“Get active recommendations, optionally filtered by priority”””
+  recommendations = [rec for rec in self.active_recommendations if not rec.is_expired]
+  
+  ```
+    if priority_filter:
+        recommendations = [rec for rec in recommendations if rec.priority == priority_filter]
+    
+    return recommendations
+  ```
+  
+  def get_high_confidence_recommendations(self, min_confidence: float = 0.8) -> List[AIRecommendation]:
+  “”“Get high-confidence recommendations”””
+  return [
+  rec for rec in self.active_recommendations
+  if rec.confidence >= min_confidence and not rec.is_expired
+  ]
+  
+  def mark_recommendation_applied(self, recommendation_id: str) -> bool:
+  “”“Mark a recommendation as applied/resolved”””
+  for i, rec in enumerate(self.active_recommendations):
+  if rec.id == recommendation_id:
+  del self.active_recommendations[i]
+  logger.info(“recommendation_applied”, recommendation_id=recommendation_id)
+  return True
+  return False
+  
+  # Status and statistics
+  
+  def get_analysis_stats(self) -> Dict[str, Any]:
+  “”“Get analysis engine statistics”””
+  avg_processing_time = 0.0
+  if self.successful_analyses > 0:
+  avg_processing_time = self.total_analysis_time / self.successful_analyses
+  
+  ```
+    success_rate = 0.0
+    total_analyses = self.successful_analyses + self.failed_analyses
+    if total_analyses > 0:
+        success_rate = (self.successful_analyses / total_analyses) * 100
+    
+    return {
+        'enabled': self.enabled,
+        'total_analyses': total_analyses,
+        'successful_analyses': self.successful_analyses,
+        'failed_analyses': self.failed_analyses,
+        'success_rate': success_rate,
+        'avg_processing_time': avg_processing_time,
+        'active_recommendations': len(self.active_recommendations),
+        'high_confidence_recommendations': len(self.get_high_confidence_recommendations()),
+        'model': self.model,
+        'confidence_threshold': self.confidence_threshold
+    }
+  ```
+  
+  def get_recent_analyses(self, limit: int = 10) -> List[Dict[str, Any]]:
+  “”“Get recent analysis results”””
+  recent = self.analysis_history[-limit:]
+  return [analysis.to_dict() for analysis in recent]
+  
+  async def test_connection(self) -> Dict[str, Any]:
+  “”“Test Claude API connection”””
+  if not self.claude_client:
+  return {‘success’: False, ‘error’: ‘No API client configured’}
+  
+  ```
+    try:
+        # Simple test query
+        response = await self.claude_client.messages.create(
+            model=self.model,
+            max_tokens=100,
+            temperature=0,
+            messages=[
+                {"role": "user", "content": "Respond with 'Claude AI connection successful' if you can read this."}
+            ]
+        )
+        
+        response_text = response.content[0].text
+        
+        return {
+            'success': True,
+            'response': response_text,
+            'model': self.model,
+            'timestamp': time.time()
         }
         
-        for key in changes.keys():
-            if key not in safe_parameters:
-                return False
-        
-        return True
-    
-    async def _apply_safe_recommendations(self, recommendations: List[ClaudeRecommendation]):
-        """Automatically apply safe, low-risk recommendations"""
-        
-        applied_count = 0
-        
-        for rec in recommendations:
-            # Only apply low/medium priority config changes automatically
-            if (rec.priority in ['low', 'medium'] and 
-                rec.config_changes and 
-                not rec.code_changes):
-                
-                try:
-                    await self._apply_config_changes(rec.config_changes)
-                    applied_count += 1
-                    
-                    logger.info("auto_applied_recommendation",
-                              title=rec.title,
-                              changes=rec.config_changes)
-                    
-                except Exception as e:
-                    logger.error("auto_apply_failed", 
-                               title=rec.title,
-                               error=str(e))
-        
-        if applied_count > 0:
-            logger.info("recommendations_auto_applied", count=applied_count)
-    
-    async def _apply_config_changes(self, changes: Dict[str, Any]):
-        """Apply configuration changes safely"""
-        
-        for key, value in changes.items():
-            self.config.set(key, value)
-            logger.debug("config_changed", key=key, value=value)
-        
-        # Save configuration
-        # self.config.save()  # Would implement config saving
-    
-    async def _store_analysis_results(self, report: PerformanceReport, 
-                                    recommendations: List[ClaudeRecommendation]):
-        """Store analysis results for historical tracking"""
-        
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        
-        # Store performance report
-        report_file = self.reports_dir / f'performance_report_{timestamp}.json'
-        with open(report_file, 'w') as f:
-            json.dump(asdict(report), f, indent=2, default=str)
-        
-        # Store recommendations
-        recommendations_file = self.reports_dir / f'recommendations_{timestamp}.json'
-        with open(recommendations_file, 'w') as f:
-            json.dump([asdict(rec) for rec in recommendations], f, indent=2, default=str)
-        
-        # Update analysis history
-        self.analysis_history.append({
-            'timestamp': timestamp,
-            'report_file': str(report_file),
-            'recommendations_file': str(recommendations_file),
-            'recommendations_count': len(recommendations),
-            'total_profit': report.total_profit,
-            'success_rate': report.success_rate
-        })
-        
-        logger.info("analysis_results_stored", 
-                   timestamp=timestamp,
-                   recommendations_count=len(recommendations))
-    
-    async def get_manual_analysis(self, custom_prompt: str) -> str:
-        """Get manual analysis from Claude with custom prompt"""
-        
-        if not self.claude_api_key:
-            return "Claude API key not configured"
-        
-        # Add context about SmartArb Engine
-        context_prompt = f"""
-You are analyzing SmartArb Engine, a cryptocurrency arbitrage trading system.
-
-Current system status:
-- Running on Raspberry Pi 5
-- Trading on Kraken, Bybit, MEXC
-- Strategies: Spatial arbitrage (active), Triangular arbitrage (planned)
-- Risk management: Active with emergency stops
-- Performance tracking: Real-time
-
-User question: {custom_prompt}
-
-Please provide detailed analysis and recommendations.
-"""
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                headers = {
-                    'Authorization': f'Bearer {self.claude_api_key}',
-                    'Content-Type': 'application/json'
-                }
-                
-                payload = {
-                    'model': self.model,
-                    'max_tokens': 3000,
-                    'messages': [{'role': 'user', 'content': context_prompt}]
-                }
-                
-                async with session.post(self.claude_api_url, 
-                                      headers=headers, 
-                                      json=payload) as response:
-                    
-                    if response.status == 200:
-                        result = await response.json()
-                        return result['content'][0]['text']
-                    else:
-                        return f"Error: {response.status} - {await response.text()}"
-                        
-        except Exception as e:
-            logger.error("manual_analysis_failed", error=str(e))
-            return f"Analysis failed: {str(e)}"
-    
-    def get_analysis_history(self) -> List[Dict[str, Any]]:
-        """Get historical analysis results"""
-        return self.analysis_history.copy()
-    
-    def get_latest_recommendations(self) -> Optional[List[ClaudeRecommendation]]:
-        """Get most recent recommendations"""
-        if not self.analysis_history:
-            return None
-        
-        latest = self.analysis_history[-1]
-        recommendations_file = Path(latest['recommendations_file'])
-        
-        if recommendations_file.exists():
-            with open(recommendations_file, 'r') as f:
-                recommendations_data = json.load(f)
-                return [ClaudeRecommendation(**rec) for rec in recommendations_data]
-        
-        return None
+    except Exception as e:
+        logger.error("claude_connection_test_failed", error=str(e))
+        return {
+            'success': False,
+            'error': str(e),
+            'timestamp': time.time()
+        }
+  ```
