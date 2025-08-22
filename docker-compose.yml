@@ -1,192 +1,518 @@
-# SmartArb Engine Docker Compose Configuration
-version: '3.8'
+version: ‘3.8’
+
+# SmartArb Engine Development Environment
+
+# Complete Docker Compose setup for development, testing, and production deployment
 
 services:
-  # PostgreSQL Database
-  postgres:
-    image: postgres:15-alpine
-    container_name: smartarb_postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DATABASE:-smartarb}
-      POSTGRES_USER: ${POSTGRES_USERNAME:-smartarb_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    networks:
-      - smartarb_network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USERNAME:-smartarb_user} -d ${POSTGRES_DATABASE:-smartarb}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
-  # Redis Cache
-  redis:
-    image: redis:7-alpine
-    container_name: smartarb_redis
-    restart: unless-stopped
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
-    volumes:
-      - redis_data:/data
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    networks:
-      - smartarb_network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+# =============================================================================
 
-  # SmartArb Engine
-  smartarb:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: production
-    container_name: smartarb_engine
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
-      # Database configuration
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DATABASE: ${POSTGRES_DATABASE:-smartarb}
-      POSTGRES_USERNAME: ${POSTGRES_USERNAME:-smartarb_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      
-      # Redis configuration
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-      
-      # Exchange API credentials
-      KRAKEN_API_KEY: ${KRAKEN_API_KEY}
-      KRAKEN_API_SECRET: ${KRAKEN_API_SECRET}
-      BYBIT_API_KEY: ${BYBIT_API_KEY}
-      BYBIT_API_SECRET: ${BYBIT_API_SECRET}
-      MEXC_API_KEY: ${MEXC_API_KEY}
-      MEXC_API_SECRET: ${MEXC_API_SECRET}
-      
-      # Notification settings
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
-      
-      # Application settings
-      ENVIRONMENT: ${ENVIRONMENT:-production}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      PAPER_TRADING: ${PAPER_TRADING:-true}
-      
-    volumes:
-      - ./config:/app/config:ro
-      - ./logs:/app/logs
-      - ./data:/app/data
-    ports:
-      - "8000:8000"  # Health check and future API
-    networks:
-      - smartarb_network
-    healthcheck:
-      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+# SMARTARB ENGINE - Main Application
 
-  # InfluxDB for metrics (optional)
-  influxdb:
-    image: influxdb:2.7-alpine
-    container_name: smartarb_influxdb
-    restart: unless-stopped
-    profiles:
-      - monitoring
-    environment:
-      DOCKER_INFLUXDB_INIT_MODE: setup
-      DOCKER_INFLUXDB_INIT_USERNAME: admin
-      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_PASSWORD:-smartarb123}
-      DOCKER_INFLUXDB_INIT_ORG: smartarb
-      DOCKER_INFLUXDB_INIT_BUCKET: metrics
-      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_TOKEN:-smartarb-token}
-    volumes:
-      - influxdb_data:/var/lib/influxdb2
-    ports:
-      - "8086:8086"
-    networks:
-      - smartarb_network
+# =============================================================================
 
-  # Grafana for visualization (optional)
-  grafana:
-    image: grafana/grafana-oss:latest
-    container_name: smartarb_grafana
-    restart: unless-stopped
-    profiles:
-      - monitoring
-    depends_on:
-      - influxdb
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-smartarb123}
-      GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-simple-json-datasource
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
-      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
-    ports:
-      - "3000:3000"
-    networks:
-      - smartarb_network
+smartarb-engine:
+build:
+context: .
+dockerfile: Dockerfile
+target: production
+container_name: smartarb-engine
+restart: unless-stopped
 
-  # Nginx reverse proxy (optional)
-  nginx:
-    image: nginx:alpine
-    container_name: smartarb_nginx
-    restart: unless-stopped
-    profiles:
-      - proxy
-    depends_on:
-      - smartarb
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
-    ports:
-      - "80:80"
-      - "443:443"
-    networks:
-      - smartarb_network
+```
+environment:
+  # Application environment
+  - ENVIRONMENT=development
+  - DEBUG_MODE=true
+  - LOG_LEVEL=INFO
+  
+  # Database connections
+  - POSTGRES_HOST=postgres
+  - POSTGRES_PORT=5432
+  - POSTGRES_DATABASE=smartarb
+  - POSTGRES_USERNAME=smartarb_user
+  - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-smartarb_password}
+  
+  - REDIS_HOST=redis
+  - REDIS_PORT=6379
+  - REDIS_DB=0
+  - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+  
+  # Exchange API Keys (load from .env file)
+  - KRAKEN_API_KEY=${KRAKEN_API_KEY:-}
+  - KRAKEN_API_SECRET=${KRAKEN_API_SECRET:-}
+  - BYBIT_API_KEY=${BYBIT_API_KEY:-}
+  - BYBIT_API_SECRET=${BYBIT_API_SECRET:-}
+  - MEXC_API_KEY=${MEXC_API_KEY:-}
+  - MEXC_API_SECRET=${MEXC_API_SECRET:-}
+  
+  # AI Integration
+  - CLAUDE_API_KEY=${CLAUDE_API_KEY:-}
+  
+  # Notifications
+  - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+  - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+  
+  # Trading configuration
+  - TRADING_MODE=PAPER
+  - MAX_DAILY_LOSS=50
+  - MAX_POSITION_SIZE=500
 
-# Networks
-networks:
-  smartarb_network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
-
-# Volumes
 volumes:
-  postgres_data:
-    driver: local
-  redis_data:
-    driver: local
-  influxdb_data:
-    driver: local
-    profiles:
-      - monitoring
-  grafana_data:
-    driver: local
-    profiles:
-      - monitoring
+  # Application code (for development)
+  - .:/app
+  - ./logs:/app/logs
+  - ./data:/app/data
+  - ./config:/app/config
+  - ./backups:/app/backups
 
-# Additional configurations for different environments
+ports:
+  - "8000:8000"  # API/Dashboard port
+  - "8001:8001"  # Monitoring port
+
+depends_on:
+  postgres:
+    condition: service_healthy
+  redis:
+    condition: service_healthy
+
+networks:
+  - smartarb-network
+
+# Health check
+healthcheck:
+  test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=5)"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 60s
+
+# Resource limits for Raspberry Pi compatibility
+deploy:
+  resources:
+    limits:
+      memory: 1G
+      cpus: '1.0'
+    reservations:
+      memory: 512M
+      cpus: '0.5'
+```
+
+# =============================================================================
+
+# POSTGRESQL DATABASE
+
+# =============================================================================
+
+postgres:
+image: postgres:15-alpine
+container_name: smartarb-postgres
+restart: unless-stopped
+
+```
+environment:
+  - POSTGRES_DB=smartarb
+  - POSTGRES_USER=smartarb_user
+  - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-smartarb_password}
+  - POSTGRES_INITDB_ARGS=--auth-host=md5
+
+volumes:
+  - postgres_data:/var/lib/postgresql/data
+  - ./scripts/sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+  - ./scripts/sql/schema.sql:/docker-entrypoint-initdb.d/02-schema.sql
+  - ./scripts/sql/seed.sql:/docker-entrypoint-initdb.d/03-seed.sql
+
+ports:
+  - "5432:5432"
+
+networks:
+  - smartarb-network
+
+# Health check
+healthcheck:
+  test: ["CMD-SHELL", "pg_isready -U smartarb_user -d smartarb"]
+  interval: 10s
+  timeout: 5s
+  retries: 5
+
+# Optimized for Raspberry Pi
+command: >
+  postgres
+  -c max_connections=50
+  -c shared_buffers=256MB
+  -c effective_cache_size=512MB
+  -c work_mem=4MB
+  -c maintenance_work_mem=64MB
+  -c random_page_cost=1.1
+  -c temp_file_limit=2GB
+  -c log_min_duration_statement=200ms
+  -c idle_in_transaction_session_timeout=60s
+  -c lock_timeout=30s
+  -c statement_timeout=60s
+```
+
+# =============================================================================
+
+# REDIS CACHE
+
+# =============================================================================
+
+redis:
+image: redis:7-alpine
+container_name: smartarb-redis
+restart: unless-stopped
+
+```
+command: >
+  redis-server
+  --appendonly yes
+  --appendfsync everysec
+  --maxmemory 256mb
+  --maxmemory-policy allkeys-lru
+  --timeout 60
+  --tcp-keepalive 300
+
+volumes:
+  - redis_data:/data
+  - ./config/redis.conf:/usr/local/etc/redis/redis.conf
+
+ports:
+  - "6379:6379"
+
+networks:
+  - smartarb-network
+
+# Health check
+healthcheck:
+  test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+  interval: 10s
+  timeout: 3s
+  retries: 5
+```
+
+# =============================================================================
+
+# MONITORING STACK
+
+# =============================================================================
+
+# Prometheus - Metrics collection
+
+prometheus:
+image: prom/prometheus:latest
+container_name: smartarb-prometheus
+restart: unless-stopped
+
+```
+command:
+  - '--config.file=/etc/prometheus/prometheus.yml'
+  - '--storage.tsdb.path=/prometheus'
+  - '--web.console.libraries=/etc/prometheus/console_libraries'
+  - '--web.console.templates=/etc/prometheus/consoles'
+  - '--storage.tsdb.retention.time=7d'
+  - '--web.enable-lifecycle'
+
+volumes:
+  - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+  - prometheus_data:/prometheus
+
+ports:
+  - "9090:9090"
+
+depends_on:
+  - smartarb-engine
+
+networks:
+  - smartarb-network
+```
+
+# Grafana - Monitoring dashboard
+
+grafana:
+image: grafana/grafana:latest
+container_name: smartarb-grafana
+restart: unless-stopped
+
+```
+environment:
+  - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+  - GF_USERS_ALLOW_SIGN_UP=false
+  - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+
+volumes:
+  - grafana_data:/var/lib/grafana
+  - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+  - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+
+ports:
+  - "3000:3000"
+
+depends_on:
+  - prometheus
+
+networks:
+  - smartarb-network
+```
+
+# InfluxDB - Time series database for trading data
+
+influxdb:
+image: influxdb:2.7-alpine
+container_name: smartarb-influxdb
+restart: unless-stopped
+
+```
+environment:
+  - DOCKER_INFLUXDB_INIT_MODE=setup
+  - DOCKER_INFLUXDB_INIT_USERNAME=smartarb
+  - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUXDB_PASSWORD:-smartarb_password}
+  - DOCKER_INFLUXDB_INIT_ORG=smartarb
+  - DOCKER_INFLUXDB_INIT_BUCKET=trading_data
+  - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUXDB_TOKEN:-smartarb_token}
+
+volumes:
+  - influxdb_data:/var/lib/influxdb2
+  - ./monitoring/influxdb/config.yml:/etc/influxdb2/config.yml
+
+ports:
+  - "8086:8086"
+
+networks:
+  - smartarb-network
+```
+
+# =============================================================================
+
+# DEVELOPMENT TOOLS
+
+# =============================================================================
+
+# Jupyter Notebook for analysis and development
+
+jupyter:
+image: jupyter/scipy-notebook:latest
+container_name: smartarb-jupyter
+restart: unless-stopped
+
+```
+environment:
+  - JUPYTER_ENABLE_LAB=yes
+  - JUPYTER_TOKEN=${JUPYTER_TOKEN:-smartarb123}
+
+volumes:
+  - .:/home/jovyan/smartarb
+  - jupyter_data:/home/jovyan/work
+
+ports:
+  - "8888:8888"
+
+networks:
+  - smartarb-network
+
+profiles:
+  - development  # Only start with --profile development
+```
+
+# pgAdmin - PostgreSQL administration
+
+pgadmin:
+image: dpage/pgadmin4:latest
+container_name: smartarb-pgadmin
+restart: unless-stopped
+
+```
+environment:
+  - PGADMIN_DEFAULT_EMAIL=${PGADMIN_EMAIL:-admin@smartarb.dev}
+  - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_PASSWORD:-admin}
+  - PGADMIN_DISABLE_POSTFIX=true
+
+volumes:
+  - pgadmin_data:/var/lib/pgadmin
+  - ./monitoring/pgadmin/servers.json:/pgadmin4/servers.json
+
+ports:
+  - "5050:80"
+
+depends_on:
+  - postgres
+
+networks:
+  - smartarb-network
+
+profiles:
+  - development
+```
+
+# Redis Commander - Redis administration
+
+redis-commander:
+image: rediscommander/redis-commander:latest
+container_name: smartarb-redis-commander
+restart: unless-stopped
+
+```
+environment:
+  - REDIS_HOSTS=local:redis:6379
+
+ports:
+  - "8081:8081"
+
+depends_on:
+  - redis
+
+networks:
+  - smartarb-network
+
+profiles:
+  - development
+```
+
+# =============================================================================
+
+# TESTING SERVICES
+
+# =============================================================================
+
+# Test runner service
+
+test-runner:
+build:
+context: .
+dockerfile: Dockerfile
+target: builder  # Use builder stage with all dev dependencies
+container_name: smartarb-tests
+
+```
+command: >
+  sh -c "
+    echo 'Running SmartArb Engine test suite...' &&
+    python -m pytest tests/ -v --cov=src --cov-report=html --cov-report=term &&
+    echo 'Tests completed!'
+  "
+
+volumes:
+  - .:/app
+  - test_results:/app/htmlcov
+
+environment:
+  - PYTHONPATH=/app/src
+  - TESTING=true
+  - POSTGRES_HOST=postgres-test
+  - REDIS_HOST=redis-test
+
+depends_on:
+  - postgres-test
+  - redis-test
+
+networks:
+  - smartarb-test-network
+
+profiles:
+  - testing
+```
+
+# Test database
+
+postgres-test:
+image: postgres:15-alpine
+container_name: smartarb-postgres-test
+
+```
+environment:
+  - POSTGRES_DB=smartarb_test
+  - POSTGRES_USER=test_user
+  - POSTGRES_PASSWORD=test_password
+
+tmpfs:
+  - /var/lib/postgresql/data  # Use tmpfs for faster tests
+
+networks:
+  - smartarb-test-network
+
+profiles:
+  - testing
+```
+
+# Test Redis
+
+redis-test:
+image: redis:7-alpine
+container_name: smartarb-redis-test
+
+```
+command: redis-server --maxmemory 64mb
+
+tmpfs:
+  - /data
+
+networks:
+  - smartarb-test-network
+
+profiles:
+  - testing
+```
+
+# =============================================================================
+
+# VOLUMES
+
+# =============================================================================
+
+volumes:
+postgres_data:
+driver: local
+redis_data:
+driver: local
+prometheus_data:
+driver: local
+grafana_data:
+driver: local
+influxdb_data:
+driver: local
+jupyter_data:
+driver: local
+pgadmin_data:
+driver: local
+test_results:
+driver: local
+
+# =============================================================================
+
+# NETWORKS
+
+# =============================================================================
+
+networks:
+smartarb-network:
+driver: bridge
+ipam:
+config:
+- subnet: 172.20.0.0/16
+
+smartarb-test-network:
+driver: bridge
+ipam:
+config:
+- subnet: 172.21.0.0/16
+
+# =============================================================================
+
+# EXTENSION CONFIGURATIONS
+
+# =============================================================================
+
+# For production deployment
+
 x-logging: &default-logging
-  driver: "json-file"
-  options:
-    max-size: "10m"
-    max-file: "3"
+driver: “json-file”
+options:
+max-size: “10m”
+max-file: “3”
+
+# Common environment variables
+
+x-common-env: &common-env
+TZ: Europe/Rome
+PYTHONUNBUFFERED: 1
+PYTHONDONTWRITEBYTECODE: 1
