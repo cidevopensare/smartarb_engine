@@ -1,0 +1,162 @@
+# SmartArb Engine Configuration
+engine:
+  name: "SmartArb Engine"
+  version: "1.0.0"
+  mode: "development"  # development, production
+  log_level: "INFO"
+  max_concurrent_opportunities: 3
+  update_interval: 5  # seconds
+
+# Database configuration
+database:
+  postgresql:
+    host: "localhost"
+    port: 5432
+    database: "smartarb"
+    username: "smartarb_user"
+    password: "${POSTGRES_PASSWORD}"
+    pool_size: 10
+    max_overflow: 20
+  
+  redis:
+    host: "localhost" 
+    port: 6379
+    db: 0
+    password: "${REDIS_PASSWORD}"
+    decode_responses: true
+
+# Risk management parameters
+risk_management:
+  max_position_size: 1000      # USDT equivalent
+  max_daily_loss: 200          # USDT
+  min_profit_threshold: 0.20   # Percentage after fees
+  max_slippage: 0.5           # Percentage
+  emergency_stop: true
+  max_exposure_per_exchange: 500  # USDT
+  
+  # Exchange-specific limits
+  exchange_limits:
+    kraken:
+      max_position: 800        # More conservative, higher fees
+      min_profit: 0.25
+    bybit:
+      max_position: 1000       # Standard
+      min_profit: 0.20
+    mexc:
+      max_position: 600        # More volatile, smaller positions
+      min_profit: 0.30
+
+# Trading configuration
+trading:
+  enabled_pairs:
+    - "BTC/USDT"
+    - "ETH/USDT"
+    - "BNB/USDT"
+    - "ADA/USDT"
+    - "DOT/USDT"
+    - "LINK/USDT"
+    - "MATIC/USDT"
+  
+  order_type: "limit"           # limit, market
+  order_timeout: 30             # seconds
+  max_order_retries: 3
+  
+  # Fee estimates (will be updated dynamically)
+  estimated_fees:
+    kraken: 0.26               # 0.16% maker + 0.26% taker
+    bybit: 0.10                # 0.10% taker
+    mexc: 0.20                 # 0.20% taker
+
+# Monitoring and alerts
+monitoring:
+  enable_dashboard: false       # Will implement later
+  telegram_alerts: true
+  telegram_bot_token: "${TELEGRAM_BOT_TOKEN}"
+  telegram_chat_id: "${TELEGRAM_CHAT_ID}"
+  
+  # Performance metrics
+  metrics:
+    save_to_influx: false      # Start simple, add later
+    save_to_file: true
+    metrics_file: "logs/metrics.json"
+    
+  # Health checks
+  health_check:
+    interval: 60               # seconds
+    api_timeout: 10            # seconds
+    max_failed_requests: 5
+
+# Strategy configuration
+strategies:
+  spatial_arbitrage:
+    enabled: true
+    scan_interval: 5           # seconds
+    min_volume_24h: 1000000    # USDT
+    
+  triangular_arbitrage:
+    enabled: false             # Implement later
+    scan_interval: 10
+    
+# Logging configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file_logging: true
+  log_file: "logs/smartarb.log"
+  max_file_size: 10485760      # 10MB
+  backup_count: 5
+  
+  # Component-specific logging
+  components:
+    engine: "INFO"
+    exchanges: "INFO" 
+    strategies: "DEBUG"
+    risk: "INFO"
+    execution: "DEBUG"
+
+# Development settings
+development:
+  paper_trading: true          # Start with paper trading
+  mock_exchanges: false        # Use real exchange APIs
+  debug_mode: true
+  save_all_opportunities: true # For analysis
+
+# =============================================================================
+# AI CLAUDE INTEGRATION SETTINGS
+# =============================================================================
+ai:
+  enabled: true                # Enable AI analysis system
+  
+  # Claude API configuration
+  claude_api_key: "${CLAUDE_API_KEY}"
+  claude_api_url: "https://api.anthropic.com/v1/messages"
+  model: "claude-3-sonnet-20240229"
+  
+  # Analysis scheduling
+  scheduling:
+    default: "0 */6 * * *"     # Every 6 hours (cron format)
+    emergency_triggers:
+      low_success_rate: 60.0   # Trigger if success rate < 60%
+      high_drawdown: -100.0    # Trigger if drawdown > $100
+      execution_latency: 5000  # Trigger if latency > 5 seconds
+      failed_trades_streak: 5  # Trigger after 5 consecutive failures
+  
+  # Analysis behavior
+  analysis_frequency: "daily"  # hourly, daily, weekly
+  auto_apply_safe_changes: false  # Auto-apply low-risk config changes
+  min_confidence_threshold: 0.8   # Minimum confidence for recommendations
+  
+  # Code update settings
+  code_updates:
+    enabled: true
+    require_tests: true        # Run tests before applying changes
+    require_backup: true       # Create backups before changes
+    max_changes_per_update: 5  # Maximum changes in single update
+    auto_rollback_on_failure: true
+  
+  # Dashboard settings
+  dashboard:
+    enabled: true
+    update_interval: 30        # Dashboard update interval (seconds)
+    save_snapshots: true       # Save historical snapshots
+    max_snapshots: 100         # Maximum snapshots to keep
