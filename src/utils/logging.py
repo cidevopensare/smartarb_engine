@@ -1,6 +1,6 @@
 “””
 Advanced Logging System for SmartArb Engine
-Provides structured logging with file rotation, performance tracking, and AI integration
+Provides structured logging with multiple outputs and specialized loggers
 “””
 
 import os
@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import structlog
 from structlog.stdlib import LoggerFactory
-import colorama
-from colorama import Fore, Back, Style
+import json
+from datetime import datetime
+import traceback
 
 def setup_logging(config: Dict[str, Any]) -> None:
 “””
@@ -21,488 +22,442 @@ Setup comprehensive logging system for SmartArb Engine
 ```
 Features:
 - Structured logging with structlog
-- File rotation with size limits
-- Colored console output
-- Performance tracking
-- AI-friendly log format
-- Raspberry Pi optimized
+- Multiple output formats (JSON, human-readable)
+- Rotating file logs
+- Console logging with colors
+- Separate logs for trades, errors, and performance
 """
 
-# Initialize colorama for cross-platform colored output
-colorama.init(autoreset=True)
-
 # Get logging configuration
-logging_config = config.get('logging', {})
-log_level = getattr(logging, logging_config.get('level', 'INFO').upper())
-log_format = logging_config.get('format', 'structured')
+log_config = config.get('logging', {})
+log_level = log_config.get('level', 'INFO')
+log_dir = Path(log_config.get('file_logging', {}).get('log_dir', 'logs'))
 
 # Create logs directory
-log_dir = Path(logging_config.get('file_logging', {}).get('log_dir', 'logs'))
 log_dir.mkdir(exist_ok=True)
 
-# Configure standard logging
+# Configure standard library logging
 logging.basicConfig(
-    level=log_level,
-    format='%(message)s'
+    format="%(message)s",
+    stream=sys.stdout,
+    level=getattr(logging, log_level.upper())
 )
 
-# Setup structlog processors
-processors = [
+# Setup timestamper
+timestamper = structlog.processors.TimeStamper(fmt="ISO")
+
+# Setup processors based on environment
+shared_processors = [
+    structlog.contextvars.merge_contextvars,
     structlog.stdlib.filter_by_level,
     structlog.stdlib.add_logger_name,
     structlog.stdlib.add_log_level,
     structlog.stdlib.PositionalArgumentsFormatter(),
-    add_timestamp,
-    add_system_info,
+    timestamper,
     structlog.processors.StackInfoRenderer(),
     structlog.processors.format_exc_info,
 ]
 
-# Add performance tracking
-processors.append(add_performance_metrics)
+# Console logging processors
+console_processors = shared_processors + [
+    structlog.dev.ConsoleRenderer(colors=log_config.get('console_logging', {}).get('colored', True))
+]
 
-# Add AI-friendly formatting for analysis
-processors.append(add_ai_metadata)
-
-# Console output processor
-if logging_config.get('console_logging', {}).get('enabled', True):
-    if logging_config.get('console_logging', {}).get('colored', True):
-        processors.append(colored_console_renderer)
-    else:
-        processors.append(structlog.dev.ConsoleRenderer())
+# File logging processors (JSON format)
+file_processors = shared_processors + [
+    structlog.processors.JSONRenderer()
+]
 
 # Configure structlog
 structlog.configure(
-    processors=processors,
+    processors=console_processors,
     wrapper_class=structlog.stdlib.BoundLogger,
     logger_factory=LoggerFactory(),
     cache_logger_on_first_use=True,
 )
 
-# Setup file logging
-if logging_config.get('file_logging', {}).get('enabled', True):
-    setup_file_logging(logging_config, log_dir)
+# Setup file logging if enabled
+if log_config.get('file_logging', {}).get('enabled', True):
+    _setup_file_logging(log_config, log_dir, file_processors)
 
-# Setup specific logger levels
-logger_levels = logging_config.get('loggers', {})
-for logger_name, level in logger_levels.items():
-    logging.getLogger(logger_name).setLevel(getattr(logging, level.upper()))
+# Setup specialized loggers
+_setup_specialized_loggers(log_config, log_dir)
 
-# Get root structlog logger and log initialization
-logger = structlog.get_logger(__name__)
+# Log initial setup message
+logger = structlog.get_logger("smartarb.logging")
 logger.info("logging_system_initialized",
-           level=log_level,
-           format=log_format,
-           log_dir=str(log_dir),
-           processors=len(processors))
+            level=log_level,
+            log_dir=str(log_dir),
+            file_logging=log_config.get('file_logging', {}).get('enabled', True))
 ```
 
-def setup_file_logging(logging_config: Dict[str, Any], log_dir: Path) -> None:
-“”“Setup file logging with rotation”””
-file_config = logging_config.get(‘file_logging’, {})
+def _setup_file_logging(log_config: Dict[str, Any], log_dir: Path, processors: list):
+“”“Setup rotating file logging”””
 
 ```
-# Main application log
-main_log_file = log_dir / 'smartarb.log'
-max_file_size = file_config.get('max_file_size_mb', 50) * 1024 * 1024  # Convert to bytes
+file_config = log_config.get('file_logging', {})
+max_bytes = file_config.get('max_file_size_mb', 50) * 1024 * 1024  # Convert to bytes
 backup_count = file_config.get('backup_count', 5)
 
-# Create rotating file handler
-file_handler = logging.handlers.RotatingFileHandler(
+# Main application log
+main_log_file = log_dir / "smartarb.log"
+main_handler = logging.handlers.RotatingFileHandler(
     main_log_file,
-    maxBytes=max_file_size,
+    maxBytes=max_bytes,
     backupCount=backup_count,
     encoding='utf-8'
 )
 
-# File formatter (JSON for structured logging)
-file_formatter = StructuredFileFormatter()
-file_handler.setFormatter(file_formatter)
+# Create a separate logger for file output with JSON formatting
+file_logger = logging.getLogger("smartarb_file")
+file_logger.setLevel(getattr(logging, log_config.get('level', 'INFO').upper()))
+file_logger.addHandler(main_handler)
 
-# Add to root logger
-root_logger = logging.getLogger()
-root_logger.addHandler(file_handler)
-
-# Separate log files for different components
-component_logs = {
-    'trades': 'trades.log',
-    'errors': 'errors.log',
-    'ai': 'ai_analysis.log',
-    'performance': 'performance.log'
-}
-
-for component, filename in component_logs.items():
-    component_log_file = log_dir / filename
-    component_handler = logging.handlers.RotatingFileHandler(
-        component_log_file,
-        maxBytes=max_file_size // 2,  # Smaller files for component logs
-        backupCount=3,
-        encoding='utf-8'
-    )
-    component_handler.setFormatter(file_formatter)
-    
-    # Create component-specific logger
-    component_logger = logging.getLogger(f'smartarb.{component}')
-    component_logger.addHandler(component_handler)
-    component_logger.setLevel(logging.INFO)
+# Configure structlog to also log to file
+structlog.configure_once(
+    processors=processors,
+    wrapper_class=structlog.stdlib.BoundLogger,
+    logger_factory=LoggerFactory(),
+    cache_logger_on_first_use=True,
+)
 ```
 
-class StructuredFileFormatter(logging.Formatter):
-“”“Custom formatter for structured file logging”””
+def _setup_specialized_loggers(log_config: Dict[str, Any], log_dir: Path):
+“”“Setup specialized loggers for different components”””
 
 ```
-def format(self, record: logging.LogRecord) -> str:
-    """Format log record as structured JSON"""
-    import json
-    from datetime import datetime
-    
-    # Extract structlog event dict if available
-    if hasattr(record, 'msg') and isinstance(record.msg, dict):
-        event_dict = record.msg.copy()
-    else:
-        event_dict = {'message': str(record.msg)}
-    
-    # Add standard fields
+file_config = log_config.get('file_logging', {})
+if not file_config.get('enabled', True):
+    return
+
+max_bytes = file_config.get('max_file_size_mb', 50) * 1024 * 1024
+backup_count = file_config.get('backup_count', 5)
+
+# Trading activity logger
+trade_logger = logging.getLogger("smartarb.trades")
+trade_handler = logging.handlers.RotatingFileHandler(
+    log_dir / "trades.log",
+    maxBytes=max_bytes,
+    backupCount=backup_count,
+    encoding='utf-8'
+)
+trade_handler.setFormatter(JSONLogFormatter())
+trade_logger.addHandler(trade_handler)
+trade_logger.setLevel(logging.INFO)
+
+# Error logger
+error_logger = logging.getLogger("smartarb.errors")
+error_handler = logging.handlers.RotatingFileHandler(
+    log_dir / "errors.log",
+    maxBytes=max_bytes,
+    backupCount=backup_count,
+    encoding='utf-8'
+)
+error_handler.setFormatter(JSONLogFormatter())
+error_logger.addHandler(error_handler)
+error_logger.setLevel(logging.ERROR)
+
+# Performance logger
+perf_logger = logging.getLogger("smartarb.performance")
+perf_handler = logging.handlers.RotatingFileHandler(
+    log_dir / "performance.log",
+    maxBytes=max_bytes,
+    backupCount=backup_count,
+    encoding='utf-8'
+)
+perf_handler.setFormatter(JSONLogFormatter())
+perf_logger.addHandler(perf_handler)
+perf_logger.setLevel(logging.INFO)
+
+# AI Analysis logger
+ai_logger = logging.getLogger("smartarb.ai")
+ai_handler = logging.handlers.RotatingFileHandler(
+    log_dir / "ai_analysis.log",
+    maxBytes=max_bytes,
+    backupCount=backup_count,
+    encoding='utf-8'
+)
+ai_handler.setFormatter(JSONLogFormatter())
+ai_logger.addHandler(ai_handler)
+ai_logger.setLevel(logging.INFO)
+
+# Risk management logger
+risk_logger = logging.getLogger("smartarb.risk")
+risk_handler = logging.handlers.RotatingFileHandler(
+    log_dir / "risk.log",
+    maxBytes=max_bytes,
+    backupCount=backup_count,
+    encoding='utf-8'
+)
+risk_handler.setFormatter(JSONLogFormatter())
+risk_logger.addHandler(risk_handler)
+risk_logger.setLevel(logging.WARNING)
+```
+
+class JSONLogFormatter(logging.Formatter):
+“”“Custom JSON formatter for structured file logging”””
+
+```
+def format(self, record):
     log_entry = {
         'timestamp': datetime.fromtimestamp(record.created).isoformat(),
         'level': record.levelname,
         'logger': record.name,
+        'message': record.getMessage(),
         'module': record.module,
         'function': record.funcName,
-        'line': record.lineno,
-        **event_dict
+        'line': record.lineno
     }
     
     # Add exception info if present
     if record.exc_info:
-        log_entry['exception'] = self.formatException(record.exc_info)
+        log_entry['exception'] = {
+            'type': record.exc_info[0].__name__,
+            'message': str(record.exc_info[1]),
+            'traceback': traceback.format_exception(*record.exc_info)
+        }
     
-    return json.dumps(log_entry, ensure_ascii=False, default=str)
-```
-
-def add_timestamp(logger, method_name, event_dict):
-“”“Add timestamp to log events”””
-from datetime import datetime
-event_dict[‘timestamp’] = datetime.utcnow().isoformat() + ‘Z’
-return event_dict
-
-def add_system_info(logger, method_name, event_dict):
-“”“Add system information to log events”””
-import psutil
-import platform
-
-```
-# Add basic system info (cached to avoid performance impact)
-if not hasattr(add_system_info, '_system_info'):
-    add_system_info._system_info = {
-        'hostname': platform.node(),
-        'platform': platform.system(),
-        'python_version': platform.python_version(),
-        'pid': os.getpid()
-    }
-
-event_dict.update(add_system_info._system_info)
-
-# Add current resource usage (only for important events)
-if event_dict.get('level') in ['error', 'critical'] or 'performance' in str(event_dict):
-    try:
-        process = psutil.Process()
-        event_dict.update({
-            'memory_percent': process.memory_percent(),
-            'cpu_percent': process.cpu_percent(),
-            'num_threads': process.num_threads()
-        })
-    except Exception:
-        pass  # Don't let system info collection fail logging
-
-return event_dict
-```
-
-def add_performance_metrics(logger, method_name, event_dict):
-“”“Add performance metrics to log events”””
-import time
-
-```
-# Add execution time for trade-related events
-event_type = event_dict.get('event', '')
-
-if 'execution' in event_type or 'trade' in event_type:
-    # Try to calculate execution time if start_time is available
-    start_time = event_dict.get('start_time')
-    if start_time:
-        event_dict['execution_time_ms'] = (time.time() - start_time) * 1000
-
-# Add performance context
-if any(keyword in str(event_dict) for keyword in ['opportunity', 'execution', 'trade']):
-    event_dict['performance_context'] = True
-
-return event_dict
-```
-
-def add_ai_metadata(logger, method_name, event_dict):
-“”“Add metadata useful for AI analysis”””
-
-```
-# Tag events that are relevant for AI analysis
-ai_relevant_keywords = [
-    'opportunity', 'execution', 'profit', 'loss', 'error', 'failed',
-    'success', 'performance', 'risk', 'arbitrage', 'trade'
-]
-
-event_str = str(event_dict).lower()
-if any(keyword in event_str for keyword in ai_relevant_keywords):
-    event_dict['ai_relevant'] = True
+    # Add extra fields from the log record
+    for key, value in record.__dict__.items():
+        if key not in ['name', 'msg', 'args', 'levelname', 'levelno', 'pathname', 
+                      'filename', 'module', 'lineno', 'funcName', 'created', 'msecs', 
+                      'relativeCreated', 'thread', 'threadName', 'processName', 
+                      'process', 'getMessage', 'exc_info', 'exc_text', 'stack_info']:
+            log_entry[key] = value
     
-    # Add context for AI analysis
-    if 'opportunity' in event_str:
-        event_dict['ai_category'] = 'opportunity_detection'
-    elif 'execution' in event_str or 'trade' in event_str:
-        event_dict['ai_category'] = 'trade_execution'
-    elif 'error' in event_str or 'failed' in event_str:
-        event_dict['ai_category'] = 'error_analysis'
-    elif 'performance' in event_str or 'profit' in event_str:
-        event_dict['ai_category'] = 'performance_analysis'
-    elif 'risk' in event_str:
-        event_dict['ai_category'] = 'risk_management'
-
-# Add severity for AI prioritization
-level = event_dict.get('level', '').lower()
-if level in ['error', 'critical']:
-    event_dict['ai_priority'] = 'high'
-elif level == 'warning':
-    event_dict['ai_priority'] = 'medium'
-else:
-    event_dict['ai_priority'] = 'low'
-
-return event_dict
+    return json.dumps(log_entry, default=str)
 ```
 
-def colored_console_renderer(logger, method_name, event_dict):
-“”“Custom colored console renderer for better readability”””
+def get_specialized_loggers() -> Dict[str, Any]:
+“”“Get all specialized loggers for different components”””
 
 ```
-# Extract key information
-timestamp = event_dict.get('timestamp', '')
-level = event_dict.get('level', '').upper()
-logger_name = event_dict.get('logger', '')
-
-# Choose colors based on log level
-level_colors = {
-    'DEBUG': Fore.CYAN,
-    'INFO': Fore.GREEN,
-    'WARNING': Fore.YELLOW,
-    'ERROR': Fore.RED,
-    'CRITICAL': Fore.RED + Back.WHITE + Style.BRIGHT
+return {
+    'main': structlog.get_logger("smartarb.main"),
+    'engine': structlog.get_logger("smartarb.engine"),
+    'trading': structlog.get_logger("smartarb.trades"),
+    'risk': structlog.get_logger("smartarb.risk"),
+    'portfolio': structlog.get_logger("smartarb.portfolio"),
+    'execution': structlog.get_logger("smartarb.execution"),
+    'strategies': structlog.get_logger("smartarb.strategies"),
+    'exchanges': structlog.get_logger("smartarb.exchanges"),
+    'ai': structlog.get_logger("smartarb.ai"),
+    'performance': structlog.get_logger("smartarb.performance"),
+    'notifications': structlog.get_logger("smartarb.notifications"),
+    'config': structlog.get_logger("smartarb.config"),
+    'database': structlog.get_logger("smartarb.database"),
+    'websocket': structlog.get_logger("smartarb.websocket"),
+    'api': structlog.get_logger("smartarb.api"),
+    'monitoring': structlog.get_logger("smartarb.monitoring")
 }
-
-level_color = level_colors.get(level, Fore.WHITE)
-
-# Format timestamp (shorter for console)
-if timestamp:
-    from datetime import datetime
-    try:
-        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-        time_str = dt.strftime('%H:%M:%S')
-    except:
-        time_str = timestamp[:8]  # Fallback
-else:
-    time_str = ''
-
-# Create colored output
-output_parts = []
-
-# Timestamp
-if time_str:
-    output_parts.append(f"{Fore.BLUE}{time_str}{Style.RESET_ALL}")
-
-# Level
-output_parts.append(f"{level_color}{level:8}{Style.RESET_ALL}")
-
-# Logger name (shortened)
-if logger_name:
-    short_logger = logger_name.split('.')[-1][:12]
-    output_parts.append(f"{Fore.MAGENTA}{short_logger:12}{Style.RESET_ALL}")
-
-# Main message
-main_msg = event_dict.get('event', event_dict.get('message', ''))
-if main_msg:
-    output_parts.append(f"{Fore.WHITE}{main_msg}{Style.RESET_ALL}")
-
-# Add important context
-context_parts = []
-
-# Trading-specific context
-for key in ['opportunity_id', 'symbol', 'exchange', 'profit', 'amount']:
-    if key in event_dict:
-        value = event_dict[key]
-        if isinstance(value, float):
-            value = f"{value:.4f}"
-        context_parts.append(f"{key}={value}")
-
-# Error context
-if level in ['ERROR', 'CRITICAL'] and 'error' in event_dict:
-    error_msg = str(event_dict['error'])[:100]  # Truncate long errors
-    context_parts.append(f"{Fore.RED}error={error_msg}{Style.RESET_ALL}")
-
-# Add context to output
-if context_parts:
-    context_str = ' '.join(context_parts)
-    output_parts.append(f"{Fore.YELLOW}[{context_str}]{Style.RESET_ALL}")
-
-return ' '.join(output_parts)
-```
-
-class PerformanceLogger:
-“”“Specialized logger for performance tracking”””
-
-```
-def __init__(self):
-    self.logger = structlog.get_logger('smartarb.performance')
-    self._timers = {}
-
-def start_timer(self, operation_id: str) -> None:
-    """Start timing an operation"""
-    import time
-    self._timers[operation_id] = time.time()
-
-def end_timer(self, operation_id: str, **context) -> None:
-    """End timing and log performance"""
-    import time
-    start_time = self._timers.pop(operation_id, None)
-    if start_time:
-        duration = (time.time() - start_time) * 1000  # Convert to milliseconds
-        self.logger.info("performance_metric",
-                       operation_id=operation_id,
-                       duration_ms=duration,
-                       **context)
-
-def log_metric(self, metric_name: str, value: float, **context) -> None:
-    """Log a performance metric"""
-    self.logger.info("performance_metric",
-                    metric_name=metric_name,
-                    value=value,
-                    **context)
 ```
 
 class TradeLogger:
-“”“Specialized logger for trade events”””
+“”“Specialized logger for trading activities”””
 
 ```
 def __init__(self):
-    self.logger = structlog.get_logger('smartarb.trades')
+    self.logger = structlog.get_logger("smartarb.trades")
 
-def log_opportunity_detected(self, opportunity_id: str, **details) -> None:
-    """Log opportunity detection"""
-    self.logger.info("opportunity_detected",
-                    opportunity_id=opportunity_id,
-                    ai_category="opportunity_detection",
-                    **details)
+def log_opportunity_found(self, opportunity: Any):
+    """Log when an arbitrage opportunity is found"""
+    self.logger.info("opportunity_found",
+                    opportunity_id=opportunity.opportunity_id,
+                    strategy=opportunity.strategy_name,
+                    symbol=opportunity.symbol,
+                    expected_profit=float(opportunity.expected_profit),
+                    profit_percent=float(opportunity.expected_profit_percent),
+                    risk_score=opportunity.risk_score,
+                    confidence=opportunity.confidence_level)
 
-def log_trade_execution_start(self, opportunity_id: str, **details) -> None:
-    """Log start of trade execution"""
-    self.logger.info("trade_execution_started",
-                    opportunity_id=opportunity_id,
-                    ai_category="trade_execution",
-                    **details)
+def log_trade_executed(self, execution_result: Any):
+    """Log completed trade execution"""
+    self.logger.info("trade_executed",
+                    execution_id=execution_result.execution_id,
+                    success=execution_result.success,
+                    profit_loss=float(execution_result.profit_loss),
+                    execution_time=execution_result.execution_time,
+                    fees_paid=float(execution_result.fees_paid),
+                    slippage=float(execution_result.slippage) if execution_result.slippage else 0)
 
-def log_trade_execution_complete(self, opportunity_id: str, profit: float, **details) -> None:
-    """Log completion of trade execution"""
-    self.logger.info("trade_execution_completed",
-                    opportunity_id=opportunity_id,
-                    profit=profit,
-                    ai_category="trade_execution",
-                    ai_priority="high" if profit > 100 else "medium",
-                    **details)
-
-def log_trade_failed(self, opportunity_id: str, error: str, **details) -> None:
+def log_trade_failed(self, execution_result: Any):
     """Log failed trade execution"""
-    self.logger.error("trade_execution_failed",
-                     opportunity_id=opportunity_id,
-                     error=error,
-                     ai_category="error_analysis",
-                     ai_priority="high",
-                     **details)
+    self.logger.error("trade_failed",
+                     execution_id=execution_result.execution_id,
+                     error_message=execution_result.error_message,
+                     status=execution_result.status.value if execution_result.status else "unknown")
+
+def log_risk_violation(self, opportunity: Any, violations: list):
+    """Log risk management violations"""
+    self.logger.warning("trade_blocked_by_risk",
+                       opportunity_id=opportunity.opportunity_id,
+                       violations=[v.value for v in violations],
+                       risk_score=opportunity.risk_score)
+```
+
+class PerformanceLogger:
+“”“Logger for performance metrics and monitoring”””
+
+```
+def __init__(self):
+    self.logger = structlog.get_logger("smartarb.performance")
+
+def log_system_metrics(self, metrics: Dict[str, Any]):
+    """Log system performance metrics"""
+    self.logger.info("system_metrics",
+                    cpu_percent=metrics.get('cpu_percent', 0),
+                    memory_percent=metrics.get('memory_percent', 0),
+                    disk_usage=metrics.get('disk_usage', 0),
+                    temperature=metrics.get('temperature', 0),
+                    network_io=metrics.get('network_io', {}))
+
+def log_exchange_latency(self, exchange: str, endpoint: str, latency_ms: float):
+    """Log exchange API latency"""
+    self.logger.info("exchange_latency",
+                    exchange=exchange,
+                    endpoint=endpoint,
+                    latency_ms=latency_ms)
+
+def log_strategy_performance(self, strategy: str, metrics: Dict[str, Any]):
+    """Log strategy performance metrics"""
+    self.logger.info("strategy_performance",
+                    strategy=strategy,
+                    opportunities_found=metrics.get('opportunities_found', 0),
+                    opportunities_executed=metrics.get('opportunities_executed', 0),
+                    success_rate=metrics.get('success_rate', 0),
+                    total_profit=metrics.get('total_profit', 0))
 ```
 
 class AILogger:
-“”“Specialized logger for AI analysis events”””
+“”“Specialized logger for AI analysis activities”””
 
 ```
 def __init__(self):
-    self.logger = structlog.get_logger('smartarb.ai')
+    self.logger = structlog.get_logger("smartarb.ai")
 
-def log_analysis_start(self, analysis_type: str, **context) -> None:
-    """Log start of AI analysis"""
+def log_analysis_started(self, analysis_type: str, trigger: str):
+    """Log AI analysis start"""
     self.logger.info("ai_analysis_started",
                     analysis_type=analysis_type,
-                    ai_relevant=True,
-                    **context)
+                    trigger=trigger,
+                    timestamp=datetime.now().isoformat())
 
-def log_analysis_complete(self, analysis_type: str, recommendations_count: int, **context) -> None:
-    """Log completion of AI analysis"""
+def log_analysis_completed(self, analysis_type: str, duration: float, 
+                         recommendations_count: int):
+    """Log AI analysis completion"""
     self.logger.info("ai_analysis_completed",
                     analysis_type=analysis_type,
-                    recommendations_count=recommendations_count,
-                    ai_relevant=True,
-                    **context)
+                    duration_seconds=duration,
+                    recommendations_count=recommendations_count)
 
-def log_recommendation(self, recommendation_type: str, confidence: float, **details) -> None:
-    """Log AI recommendation"""
-    priority = "high" if confidence > 0.8 else "medium" if confidence > 0.6 else "low"
-    self.logger.info("ai_recommendation",
-                    recommendation_type=recommendation_type,
-                    confidence=confidence,
-                    ai_relevant=True,
-                    ai_priority=priority,
-                    **details)
+def log_code_update_applied(self, update_id: str, file_path: str, 
+                          success: bool, description: str):
+    """Log code update application"""
+    self.logger.info("ai_code_update_applied",
+                    update_id=update_id,
+                    file_path=file_path,
+                    success=success,
+                    description=description)
 
-def log_code_update(self, update_type: str, files_modified: int, **details) -> None:
-    """Log AI code update"""
-    self.logger.info("ai_code_update",
-                    update_type=update_type,
-                    files_modified=files_modified,
-                    ai_relevant=True,
-                    ai_priority="high",
-                    **details)
+def log_analysis_error(self, analysis_type: str, error: str):
+    """Log AI analysis errors"""
+    self.logger.error("ai_analysis_error",
+                     analysis_type=analysis_type,
+                     error=error)
 ```
 
-def get_specialized_loggers():
-“”“Get all specialized loggers for easy import”””
-return {
-‘performance’: PerformanceLogger(),
-‘trade’: TradeLogger(),
-‘ai’: AILogger()
-}
-
-# Context manager for performance logging
-
-class log_performance:
-“”“Context manager for automatic performance logging”””
+def setup_raspberry_pi_logging():
+“”“Special logging configuration for Raspberry Pi”””
 
 ```
-def __init__(self, operation_id: str, logger: Optional[PerformanceLogger] = None, **context):
-    self.operation_id = operation_id
-    self.logger = logger or PerformanceLogger()
+# Reduce log verbosity for memory-constrained environment
+structlog.configure(
+    processors=[
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="ISO"),
+        structlog.processors.format_exc_info,
+        structlog.dev.ConsoleRenderer(colors=False)  # Disable colors for Pi
+    ],
+    wrapper_class=structlog.stdlib.BoundLogger,
+    logger_factory=LoggerFactory(),
+    cache_logger_on_first_use=True,
+)
+
+# Setup syslog for system-wide logging
+try:
+    import logging.handlers
+    syslog_handler = logging.handlers.SysLogHandler(address='/dev/log')
+    syslog_handler.setFormatter(
+        logging.Formatter('smartarb[%(process)d]: %(levelname)s - %(message)s')
+    )
+    
+    root_logger = logging.getLogger()
+    root_logger.addHandler(syslog_handler)
+    
+except Exception:
+    pass  # Syslog not available
+```
+
+def log_startup_info(config: Dict[str, Any]):
+“”“Log important startup information”””
+
+```
+logger = structlog.get_logger("smartarb.startup")
+
+# System information
+try:
+    import platform
+    import psutil
+    
+    logger.info("system_info",
+               platform=platform.platform(),
+               python_version=platform.python_version(),
+               cpu_count=psutil.cpu_count(),
+               memory_gb=round(psutil.virtual_memory().total / (1024**3), 2),
+               disk_free_gb=round(psutil.disk_usage('/').free / (1024**3), 2))
+except ImportError:
+    logger.info("system_info", status="unavailable")
+
+# Configuration summary
+logger.info("configuration_loaded",
+           exchanges_enabled=len([ex for ex in config.get('exchanges', {}).values() 
+                                if ex.get('enabled', False)]),
+           strategies_enabled=len([st for st in config.get('strategies', {}).values() 
+                                 if st.get('enabled', False)]),
+           paper_trading=config.get('trading', {}).get('paper_trading', True),
+           ai_enabled=config.get('ai', {}).get('enabled', False))
+```
+
+# Context manager for performance timing
+
+class LogTimer:
+“”“Context manager for logging execution times”””
+
+```
+def __init__(self, logger, operation: str, **context):
+    self.logger = logger
+    self.operation = operation
     self.context = context
+    self.start_time = None
 
 def __enter__(self):
-    self.logger.start_timer(self.operation_id)
+    self.start_time = datetime.now()
+    self.logger.debug(f"{self.operation}_started", **self.context)
     return self
 
 def __exit__(self, exc_type, exc_val, exc_tb):
-    if exc_type:
-        self.context['exception'] = str(exc_val)
-    self.logger.end_timer(self.operation_id, **self.context)
+    duration = (datetime.now() - self.start_time).total_seconds()
+    
+    if exc_type is None:
+        self.logger.info(f"{self.operation}_completed", 
+                       duration_seconds=duration, **self.context)
+    else:
+        self.logger.error(f"{self.operation}_failed",
+                        duration_seconds=duration,
+                        error_type=exc_type.__name__,
+                        error_message=str(exc_val),
+                        **self.context)
 ```
-
-# Decorator for automatic function performance logging
-
-def log_function_performance(operation_id: Optional[str] = None):
-“”“Decorator to automatically log function performance”””
-def decorator(func):
-def wrapper(*args, **kwargs):
-op_id = operation_id or f”{func.**module**}.{func.**name**}”
-with log_performance(op_id, function=func.**name**):
-return func(*args, **kwargs)
-return wrapper
-return decorator
