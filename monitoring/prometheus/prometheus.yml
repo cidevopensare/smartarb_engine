@@ -1,0 +1,220 @@
+# Prometheus Configuration for SmartArb Engine
+# Monitoring and metrics collection configuration
+
+global:
+  # How frequently to scrape targets by default
+  scrape_interval: 15s
+  
+  # How long until a scrape request times out
+  scrape_timeout: 10s
+  
+  # How frequently to evaluate rules
+  evaluation_interval: 15s
+  
+  # External labels to add to any time series or alerts
+  external_labels:
+    monitor: 'smartarb-monitor'
+    environment: 'production'
+
+# Rule files specifies a list of globs
+rule_files:
+  - "rules/*.yml"
+  - "alerts/*.yml"
+
+# Alerting configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+      path_prefix: /
+      scheme: http
+      timeout: 10s
+
+# Scrape configuration
+scrape_configs:
+  # SmartArb Engine main application
+  - job_name: 'smartarb-engine'
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets: ['smartarb-engine:8001']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: smartarb-engine:8001
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'smartarb_.*'
+        action: keep
+
+  # SmartArb API metrics
+  - job_name: 'smartarb-api'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    metrics_path: /api/metrics
+    scheme: http
+    static_configs:
+      - targets: ['smartarb-engine:8000']
+    relabel_configs:
+      - target_label: component
+        replacement: api
+
+  # PostgreSQL metrics (using postgres_exporter)
+  - job_name: 'postgres'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+    relabel_configs:
+      - target_label: service
+        replacement: postgresql
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'pg_.*'
+        action: keep
+
+  # Redis metrics (using redis_exporter)
+  - job_name: 'redis'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['redis-exporter:9121']
+    relabel_configs:
+      - target_label: service
+        replacement: redis
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'redis_.*'
+        action: keep
+
+  # Node/System metrics (using node_exporter)
+  - job_name: 'node-exporter'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['node-exporter:9100']
+    relabel_configs:
+      - target_label: service
+        replacement: system
+    metric_relabel_configs:
+      # Keep only relevant system metrics
+      - source_labels: [__name__]
+        regex: 'node_(cpu_seconds_total|memory_.*|disk_.*|network_.*|filesystem_.*|load.*|up|time_seconds)'
+        action: keep
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['localhost:9090']
+    relabel_configs:
+      - target_label: service
+        replacement: prometheus
+
+  # Docker containers metrics (using cAdvisor)
+  - job_name: 'cadvisor'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['cadvisor:8080']
+    relabel_configs:
+      - target_label: service
+        replacement: docker
+    metric_relabel_configs:
+      # Keep only container metrics we care about
+      - source_labels: [__name__]
+        regex: 'container_(cpu_.*|memory_.*|network_.*|fs_.*)'
+        action: keep
+
+  # Custom application metrics for specific components
+  - job_name: 'smartarb-exchanges'
+    scrape_interval: 10s  # More frequent for exchange metrics
+    metrics_path: /metrics/exchanges
+    scheme: http
+    static_configs:
+      - targets: ['smartarb-engine:8001']
+    relabel_configs:
+      - target_label: component
+        replacement: exchanges
+
+  - job_name: 'smartarb-strategies'
+    scrape_interval: 15s
+    metrics_path: /metrics/strategies
+    scheme: http
+    static_configs:
+      - targets: ['smartarb-engine:8001']
+    relabel_configs:
+      - target_label: component
+        replacement: strategies
+
+  - job_name: 'smartarb-risk'
+    scrape_interval: 10s
+    metrics_path: /metrics/risk
+    scheme: http
+    static_configs:
+      - targets: ['smartarb-engine:8001']
+    relabel_configs:
+      - target_label: component
+        replacement: risk
+
+  # Blackbox monitoring for external services
+  - job_name: 'blackbox-http'
+    scrape_interval: 60s
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+        - https://api.kraken.com/0/public/Time
+        - https://api.bybit.com/v5/market/time
+        - https://api.mexc.com/api/v3/time
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+      - target_label: exchange
+        regex: '.*api\.([^.]+)\.com.*'
+        replacement: '${1}'
+
+# Remote write configuration (optional - for long-term storage)
+remote_write:
+  - url: "http://influxdb:8086/api/v1/prom/write?db=smartarb_metrics"
+    remote_timeout: 30s
+    queue_config:
+      capacity: 2500
+      max_shards: 1000
+      min_shards: 1
+      max_samples_per_send: 500
+      batch_send_deadline: 5s
+      min_backoff: 30ms
+      max_backoff: 100ms
+
+# Storage configuration
+storage:
+  tsdb:
+    # Retention time for metrics
+    retention.time: 30d
+    
+    # Maximum size of storage
+    retention.size: 10GB
+    
+    # Compression
+    wal-compression: true
+    
+    # Path for data storage
+    path: /prometheus/data
+
+# Global configuration
+global:
+  # Labels to add to metrics
+  external_labels:
+    replica: 'prometheus-01'
+    cluster: 'smartarb-production'
+    
+  # Query log file
+  query_log_file: /prometheus/query.log
