@@ -1,0 +1,102 @@
+[Unit]
+Description=SmartArb Engine - Professional Cryptocurrency Arbitrage Trading Bot
+Documentation=https://docs.smartarb.dev
+After=network-online.target postgresql.service redis.service
+Wants=network-online.target
+Requires=postgresql.service redis.service
+
+[Service]
+# Service configuration
+Type=simple
+User=smartarb
+Group=smartarb
+WorkingDirectory=/opt/smartarb/smartarb-engine
+
+# Environment
+Environment=PATH=/opt/smartarb/venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONPATH=/opt/smartarb/smartarb-engine/src
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+# Execution
+ExecStartPre=/bin/bash -c 'until pg_isready -h ${POSTGRES_HOST:-localhost} -p ${POSTGRES_PORT:-5432} -U ${POSTGRES_USERNAME:-smartarb_user}; do sleep 1; done'
+ExecStartPre=/bin/bash -c 'until redis-cli -h ${REDIS_HOST:-localhost} -p ${REDIS_PORT:-6379} ping; do sleep 1; done'
+ExecStart=/opt/smartarb/venv/bin/python -m src.core.engine
+ExecReload=/bin/kill -HUP $MAINPID
+ExecStop=/bin/kill -TERM $MAINPID
+
+# Process management
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStartSec=60
+TimeoutStopSec=30
+Restart=always
+RestartSec=10
+StartLimitInterval=300
+StartLimitBurst=5
+
+# Output and logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=smartarb
+SyslogFacility=daemon
+
+# Security settings
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Filesystem access
+ReadWritePaths=/opt/smartarb/smartarb-engine/logs
+ReadWritePaths=/opt/smartarb/smartarb-engine/data
+ReadWritePaths=/opt/smartarb/smartarb-engine/backups
+ReadWritePaths=/tmp
+ReadOnlyPaths=/opt/smartarb/smartarb-engine
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+
+# Resource limits (optimized for Raspberry Pi)
+LimitNOFILE=65536
+LimitNPROC=32768
+
+# Memory management
+MemoryAccounting=yes
+MemoryLimit=1G
+MemoryHigh=800M
+
+# CPU management
+CPUAccounting=yes
+CPUQuota=80%
+CPUWeight=100
+
+# IO management
+IOAccounting=yes
+IOWeight=100
+
+# Task management
+TasksAccounting=yes
+TasksMax=512
+
+[Install]
+WantedBy=multi-user.target
+Alias=smartarb-engine.service
+
+# Additional configuration for monitoring
+[X-SmartArb]
+Version=1.0.0
+ConfigFile=/opt/smartarb/smartarb-engine/config/settings.yaml
+LogLevel=INFO
+PaperTrading=true
+MonitoringPort=8000
