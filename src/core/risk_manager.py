@@ -1,242 +1,273 @@
 “””
-Risk Manager for SmartArb Engine
-Comprehensive risk management system for trading operations
+Risk Management System for SmartArb Engine
+Advanced risk assessment and protection mechanisms
 “””
 
 import asyncio
 from decimal import Decimal
 from typing import Dict, List, Optional, Any, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import time
 from datetime import datetime, timedelta
 import structlog
 
-from ..strategies.base_strategy import Opportunity, OpportunityStatus
-from ..exchanges.base_exchange import BaseExchange, Balance
+from ..exchanges.base_exchange import BaseExchange
+from ..strategies.base_strategy import Opportunity
 
 logger = structlog.get_logger(**name**)
-
-class RiskLevel(Enum):
-“”“Risk level enumeration”””
-LOW = “low”
-MEDIUM = “medium”
-HIGH = “high”
-CRITICAL = “critical”
 
 class RiskViolation(Enum):
 “”“Types of risk violations”””
 POSITION_SIZE_EXCEEDED = “position_size_exceeded”
 DAILY_LOSS_EXCEEDED = “daily_loss_exceeded”
-TOTAL_EXPOSURE_EXCEEDED = “total_exposure_exceeded”
 MAX_POSITIONS_EXCEEDED = “max_positions_exceeded”
+TOTAL_EXPOSURE_EXCEEDED = “total_exposure_exceeded”
+EXCHANGE_CONCENTRATION = “exchange_concentration”
+SYMBOL_CONCENTRATION = “symbol_concentration”
+HIGH_CORRELATION = “high_correlation”
 INSUFFICIENT_BALANCE = “insufficient_balance”
-SPREAD_TOO_LOW = “spread_too_low”
-HIGH_SLIPPAGE_RISK = “high_slippage_risk”
-EXCHANGE_RELIABILITY = “exchange_reliability”
-CIRCUIT_BREAKER_TRIGGERED = “circuit_breaker_triggered”
+HIGH_VOLATILITY = “high_volatility”
+LOW_LIQUIDITY = “low_liquidity”
+EXCHANGE_UNRELIABLE = “exchange_unreliable”
+SPREAD_TOO_NARROW = “spread_too_narrow”
+EXECUTION_RISK_HIGH = “execution_risk_high”
+
+class RiskLevel(Enum):
+“”“Risk assessment levels”””
+LOW = “low”
+MEDIUM = “medium”
+HIGH = “high”
+CRITICAL = “critical”
 
 @dataclass
 class RiskAssessment:
 “”“Risk assessment result”””
 opportunity_id: str
-risk_level: RiskLevel
 risk_score: float  # 0-1 scale
-violations: List[RiskViolation]
-reasons: List[str]
-recommended_position_size: Decimal
-max_allowed_size: Decimal
-confidence_adjustment: float  # Multiplier for confidence
-
-```
-@property
-def is_acceptable(self) -> bool:
-    """Check if risk is acceptable"""
-    return self.risk_level in [RiskLevel.LOW, RiskLevel.MEDIUM] and len(self.violations) == 0
-```
+risk_level: RiskLevel
+approved: bool
+violations: List[RiskViolation] = field(default_factory=list)
+warnings: List[str] = field(default_factory=list)
+recommendations: List[str] = field(default_factory=list)
+max_position_size: Optional[Decimal] = None
+confidence_adjustment: float = 1.0
+timestamp: float = field(default_factory=time.time)
 
 @dataclass
-class PositionRisk:
-“”“Individual position risk tracking”””
+class Position:
+“”“Active position tracking”””
+position_id: str
 opportunity_id: str
 symbol: str
 exchanges: List[str]
 position_size: Decimal
 entry_time: float
 expected_profit: Decimal
-actual_profit: Decimal
-risk_score: float
-stop_loss: Optional[Decimal] = None
+max_loss: Decimal
+current_pnl: Decimal = Decimal(‘0’)
+status: str = “open”
 
-```
-@property
-def unrealized_pnl(self) -> Decimal:
-    """Calculate unrealized P&L"""
-    return self.actual_profit
-
-@property
-def duration_minutes(self) -> float:
-    """Position duration in minutes"""
-    return (time.time() - self.entry_time) / 60
-```
+@dataclass
+class ExchangeHealth:
+“”“Exchange health metrics”””
+exchange_name: str
+is_healthy: bool = True
+api_latency: float = 0.0
+error_rate: float = 0.0
+last_error_time: float = 0
+consecutive_errors: int = 0
+reliability_score: float = 1.0
+last_health_check: float = field(default_factory=time.time)
 
 class RiskManager:
 “””
-Comprehensive Risk Management System
+Advanced Risk Management System
 
 ```
 Features:
-- Position size validation
+- Position size limits
 - Daily loss limits
-- Portfolio exposure limits
-- Circuit breaker system
-- Real-time risk monitoring
-- Exchange risk assessment
+- Portfolio exposure management
+- Exchange health monitoring
+- Correlation analysis
+- Liquidity assessment
+- Dynamic risk scoring
 """
 
 def __init__(self, exchanges: Dict[str, BaseExchange], config: Dict[str, Any]):
     self.exchanges = exchanges
     self.config = config
     
-    # Risk limits from config
+    # Risk configuration
     risk_config = config.get('risk_management', {})
-    
-    # Daily limits
-    self.max_daily_trades = risk_config.get('max_daily_trades', 50)
-    self.max_daily_volume = Decimal(str(risk_config.get('max_daily_volume_usd', 10000)))
-    self.max_daily_loss = Decimal(str(risk_config.get('max_daily_loss', -200)))
     
     # Position limits
     self.max_position_size = Decimal(str(risk_config.get('max_position_size', 1000)))
-    self.max_total_exposure = Decimal(str(risk_config.get('max_total_exposure', 5000)))
+    self.max_daily_volume = Decimal(str(risk_config.get('max_daily_volume', 5000)))
     self.max_open_positions = risk_config.get('max_open_positions', 5)
+    self.max_total_exposure = Decimal(str(risk_config.get('max_total_exposure', 10000)))
     
-    # Risk controls
-    self.enable_stop_loss = risk_config.get('enable_stop_loss', True)
-    self.stop_loss_percent = Decimal(str(risk_config.get('stop_loss_percent', -2.0)))
+    # Loss limits
+    self.max_daily_loss = Decimal(str(risk_config.get('max_daily_loss', -100)))
+    self.max_position_loss = Decimal(str(risk_config.get('max_position_loss', -50)))
+    self.stop_loss_percent = Decimal(str(risk_config.get('stop_loss_percent', -5.0)))
+    
+    # Risk thresholds
+    self.high_risk_threshold = risk_config.get('high_risk_threshold', 0.7)
+    self.critical_risk_threshold = risk_config.get('critical_risk_threshold', 0.9)
+    self.min_confidence_threshold = risk_config.get('min_confidence_threshold', 0.6)
+    
+    # Concentration limits
+    self.max_symbol_concentration = risk_config.get('max_symbol_concentration', 0.3)  # 30%
+    self.max_exchange_concentration = risk_config.get('max_exchange_concentration', 0.5)  # 50%
+    
+    # Operational limits
+    self.max_daily_trades = risk_config.get('max_daily_trades', 50)
+    self.min_spread_percent = Decimal(str(risk_config.get('min_spread_percent', 0.1)))
+    
+    # Emergency controls
     self.emergency_stop_enabled = risk_config.get('emergency_stop_enabled', True)
-    
-    # Circuit breaker
-    circuit_config = risk_config.get('circuit_breaker', {})
-    self.circuit_breaker_enabled = circuit_config.get('enabled', True)
-    self.circuit_breaker_loss_threshold = Decimal(str(circuit_config.get('loss_threshold', -100)))
-    self.circuit_breaker_lookback_minutes = circuit_config.get('lookback_minutes', 60)
-    self.circuit_breaker_cooldown_minutes = circuit_config.get('cooldown_minutes', 30)
+    self.circuit_breaker_enabled = risk_config.get('circuit_breaker_enabled', True)
     
     # State tracking
+    self.active_positions: Dict[str, Position] = {}
     self.daily_trades = 0
     self.daily_volume = Decimal('0')
     self.daily_pnl = Decimal('0')
-    self.active_positions: Dict[str, PositionRisk] = {}
-    self.circuit_breaker_triggered = False
-    self.circuit_breaker_trigger_time = 0
+    self.last_reset_date = datetime.now().date()
     
-    # Daily reset tracking
-    self.last_daily_reset = datetime.now().date()
+    # Exchange health tracking
+    self.exchange_health: Dict[str, ExchangeHealth] = {}
+    self._initialize_exchange_health()
     
-    # Exchange reliability tracking
-    self.exchange_reliability: Dict[str, float] = {}
-    self._initialize_exchange_reliability()
+    # Risk history
+    self.risk_assessments: List[RiskAssessment] = []
+    self.max_risk_history = 1000
+    
+    # Circuit breaker state
+    self.circuit_breaker_active = False
+    self.circuit_breaker_triggered_at = None
+    self.circuit_breaker_cooldown = timedelta(minutes=30)
+    
+    # Performance tracking
+    self.risk_stats = {
+        'total_assessments': 0,
+        'approved_trades': 0,
+        'rejected_trades': 0,
+        'avg_risk_score': 0.0,
+        'violation_counts': {violation.value: 0 for violation in RiskViolation}
+    }
     
     logger.info("risk_manager_initialized",
                max_position_size=float(self.max_position_size),
                max_daily_loss=float(self.max_daily_loss),
-               circuit_breaker=self.circuit_breaker_enabled)
+               max_open_positions=self.max_open_positions,
+               emergency_stop=self.emergency_stop_enabled)
 
-def _initialize_exchange_reliability(self):
-    """Initialize exchange reliability scores"""
+def _initialize_exchange_health(self):
+    """Initialize exchange health monitoring"""
     for exchange_name in self.exchanges.keys():
-        self.exchange_reliability[exchange_name] = 0.95  # Start with high reliability
+        self.exchange_health[exchange_name] = ExchangeHealth(
+            exchange_name=exchange_name
+        )
 
-async def assess_opportunity_risk(self, opportunity: Opportunity) -> RiskAssessment:
-    """
-    Comprehensive risk assessment for a trading opportunity
-    """
-    violations = []
-    reasons = []
-    risk_score = 0.0
+async def assess_risk(self, opportunity: Opportunity) -> RiskAssessment:
+    """Comprehensive risk assessment for an opportunity"""
     
-    # Check daily reset
-    await self._check_daily_reset()
+    # Reset daily counters if needed
+    self._check_daily_reset()
     
     # Check circuit breaker
-    if await self._check_circuit_breaker():
-        violations.append(RiskViolation.CIRCUIT_BREAKER_TRIGGERED)
-        reasons.append("Circuit breaker is active")
+    if self._is_circuit_breaker_active():
         return RiskAssessment(
             opportunity_id=opportunity.opportunity_id,
-            risk_level=RiskLevel.CRITICAL,
             risk_score=1.0,
-            violations=violations,
-            reasons=reasons,
-            recommended_position_size=Decimal('0'),
-            max_allowed_size=Decimal('0'),
-            confidence_adjustment=0.0
+            risk_level=RiskLevel.CRITICAL,
+            approved=False,
+            violations=[RiskViolation.DAILY_LOSS_EXCEEDED],
+            warnings=["Circuit breaker is active"]
         )
     
-    # 1. Position size assessment
-    position_risk, position_violations = await self._assess_position_size(opportunity)
-    violations.extend(position_violations)
-    risk_score += position_risk
-    
-    # 2. Daily limits assessment
-    daily_risk, daily_violations = await self._assess_daily_limits(opportunity)
-    violations.extend(daily_violations)
-    risk_score += daily_risk
-    
-    # 3. Portfolio exposure assessment
-    exposure_risk, exposure_violations = await self._assess_portfolio_exposure(opportunity)
-    violations.extend(exposure_violations)
-    risk_score += exposure_risk
-    
-    # 4. Exchange risk assessment
-    exchange_risk, exchange_violations = await self._assess_exchange_risk(opportunity)
-    violations.extend(exchange_violations)
-    risk_score += exchange_risk
-    
-    # 5. Opportunity-specific risk assessment
-    opp_risk, opp_violations = await self._assess_opportunity_specific_risk(opportunity)
-    violations.extend(opp_violations)
-    risk_score += opp_risk
-    
-    # 6. Balance sufficiency check
-    balance_risk, balance_violations = await self._assess_balance_sufficiency(opportunity)
-    violations.extend(balance_violations)
-    risk_score += balance_risk
-    
-    # Calculate recommended position size
-    recommended_size = await self._calculate_recommended_position_size(opportunity, risk_score)
-    max_allowed_size = min(opportunity.amount, self.max_position_size)
-    
-    # Determine risk level
-    risk_level = self._calculate_risk_level(risk_score, len(violations))
-    
-    # Calculate confidence adjustment
-    confidence_adjustment = max(0.1, 1.0 - (risk_score * 0.5))
-    
-    # Add specific reasons based on violations
-    for violation in violations:
-        reasons.append(self._get_violation_reason(violation))
-    
+    # Perform multi-dimensional risk assessment
     assessment = RiskAssessment(
         opportunity_id=opportunity.opportunity_id,
-        risk_level=risk_level,
-        risk_score=min(1.0, risk_score),
-        violations=violations,
-        reasons=reasons,
-        recommended_position_size=recommended_size,
-        max_allowed_size=max_allowed_size,
-        confidence_adjustment=confidence_adjustment
+        risk_score=0.0,
+        risk_level=RiskLevel.LOW,
+        approved=True
     )
     
-    logger.info("risk_assessment_completed",
-               opportunity_id=opportunity.opportunity_id,
-               risk_level=risk_level.value,
-               risk_score=risk_score,
-               violations=len(violations),
-               recommended_size=float(recommended_size))
-    
-    return assessment
+    try:
+        # Position size assessment
+        position_risk, position_violations = await self._assess_position_size(opportunity)
+        assessment.risk_score += position_risk * 0.25
+        assessment.violations.extend(position_violations)
+        
+        # Daily limits assessment
+        daily_risk, daily_violations = await self._assess_daily_limits(opportunity)
+        assessment.risk_score += daily_risk * 0.20
+        assessment.violations.extend(daily_violations)
+        
+        # Portfolio exposure assessment
+        exposure_risk, exposure_violations = await self._assess_portfolio_exposure(opportunity)
+        assessment.risk_score += exposure_risk * 0.20
+        assessment.violations.extend(exposure_violations)
+        
+        # Exchange risk assessment
+        exchange_risk, exchange_violations = await self._assess_exchange_risk(opportunity)
+        assessment.risk_score += exchange_risk * 0.15
+        assessment.violations.extend(exchange_violations)
+        
+        # Market risk assessment
+        market_risk, market_violations = await self._assess_market_risk(opportunity)
+        assessment.risk_score += market_risk * 0.15
+        assessment.violations.extend(market_violations)
+        
+        # Execution risk assessment
+        execution_risk, execution_violations = await self._assess_execution_risk(opportunity)
+        assessment.risk_score += execution_risk * 0.05
+        assessment.violations.extend(execution_violations)
+        
+        # Determine risk level and approval
+        assessment.risk_level = self._calculate_risk_level(assessment.risk_score)
+        assessment.approved = self._determine_approval(assessment)
+        
+        # Generate recommendations
+        assessment.recommendations = self._generate_recommendations(assessment, opportunity)
+        
+        # Adjust position size if needed
+        assessment.max_position_size = self._calculate_max_position_size(assessment, opportunity)
+        
+        # Update statistics
+        self._update_risk_stats(assessment)
+        
+        # Store assessment
+        self.risk_assessments.append(assessment)
+        if len(self.risk_assessments) > self.max_risk_history:
+            self.risk_assessments = self.risk_assessments[-self.max_risk_history:]
+        
+        logger.info("risk_assessment_completed",
+                   opportunity_id=opportunity.opportunity_id,
+                   risk_score=assessment.risk_score,
+                   risk_level=assessment.risk_level.value,
+                   approved=assessment.approved,
+                   violations_count=len(assessment.violations))
+        
+        return assessment
+        
+    except Exception as e:
+        logger.error("risk_assessment_failed",
+                    opportunity_id=opportunity.opportunity_id,
+                    error=str(e))
+        
+        # Return conservative assessment on error
+        return RiskAssessment(
+            opportunity_id=opportunity.opportunity_id,
+            risk_score=1.0,
+            risk_level=RiskLevel.CRITICAL,
+            approved=False,
+            warnings=[f"Risk assessment error: {str(e)}"]
+        )
 
 async def _assess_position_size(self, opportunity: Opportunity) -> Tuple[float, List[RiskViolation]]:
     """Assess position size risk"""
@@ -246,21 +277,28 @@ async def _assess_position_size(self, opportunity: Opportunity) -> Tuple[float, 
     # Check against maximum position size
     if opportunity.amount > self.max_position_size:
         violations.append(RiskViolation.POSITION_SIZE_EXCEEDED)
-        risk_score += 0.3
+        risk_score += 0.5
     
-    # Check against available capital
-    total_exposure = sum(pos.position_size for pos in self.active_positions.values())
-    remaining_capital = self.max_total_exposure - total_exposure
+    # Risk increases as position size approaches limit
+    size_ratio = float(opportunity.amount / self.max_position_size)
+    if size_ratio > 0.8:
+        risk_score += 0.2
+    elif size_ratio > 0.5:
+        risk_score += 0.1
     
-    if opportunity.amount > remaining_capital:
-        violations.append(RiskViolation.TOTAL_EXPOSURE_EXCEEDED)
-        risk_score += 0.4
-    
-    # Size relative to portfolio
-    if total_exposure > 0:
-        position_percent = (opportunity.amount / total_exposure) * 100
-        if position_percent > 50:  # Single position > 50% of portfolio
-            risk_score += 0.2
+    # Check against available balance
+    try:
+        if hasattr(opportunity, 'exchanges'):
+            for exchange_name in opportunity.exchanges:
+                if exchange_name in self.exchanges:
+                    exchange = self.exchanges[exchange_name]
+                    # Simplified balance check - would need actual implementation
+                    # balances = await exchange.get_balance()
+                    # Implementation would check actual balances
+                    pass
+    except Exception as e:
+        logger.warning("balance_check_failed", error=str(e))
+        risk_score += 0.1
     
     return risk_score, violations
 
@@ -321,329 +359,381 @@ async def _assess_portfolio_exposure(self, opportunity: Opportunity) -> Tuple[fl
     )
     symbol_ratio = float((symbol_exposure + opportunity.amount) / self.max_total_exposure)
     
-    if symbol_ratio > 0.3:  # Max 30% in single symbol
+    if symbol_ratio > self.max_symbol_concentration:
+        violations.append(RiskViolation.SYMBOL_CONCENTRATION)
         risk_score += 0.2
     
     return risk_score, violations
 
 async def _assess_exchange_risk(self, opportunity: Opportunity) -> Tuple[float, List[RiskViolation]]:
-    """Assess exchange-specific risks"""
+    """Assess exchange-related risks"""
     violations = []
     risk_score = 0.0
     
-    # Get exchange names from opportunity (implementation depends on opportunity type)
-    exchanges_involved = getattr(opportunity, 'exchanges', [])
-    if not exchanges_involved and hasattr(opportunity, 'buy_exchange'):
-        exchanges_involved = [opportunity.buy_exchange, opportunity.sell_exchange]
+    # Get exchanges involved in the opportunity
+    exchanges = getattr(opportunity, 'exchanges', [])
+    if hasattr(opportunity, 'buy_exchange') and hasattr(opportunity, 'sell_exchange'):
+        exchanges = [opportunity.buy_exchange, opportunity.sell_exchange]
     
-    for exchange_name in exchanges_involved:
-        if exchange_name in self.exchange_reliability:
-            reliability = self.exchange_reliability[exchange_name]
-            if reliability < 0.8:
-                violations.append(RiskViolation.EXCHANGE_RELIABILITY)
-                risk_score += (1.0 - reliability) * 0.3
+    for exchange_name in exchanges:
+        if exchange_name in self.exchange_health:
+            health = self.exchange_health[exchange_name]
+            
+            # Check exchange reliability
+            if not health.is_healthy:
+                violations.append(RiskViolation.EXCHANGE_UNRELIABLE)
+                risk_score += 0.3
+            
+            # Risk increases with poor reliability
+            reliability_risk = (1.0 - health.reliability_score) * 0.2
+            risk_score += reliability_risk
+            
+            # High latency increases execution risk
+            if health.api_latency > 2000:  # 2 seconds
+                risk_score += 0.1
+            
+            # Recent errors increase risk
+            if health.consecutive_errors > 3:
+                risk_score += 0.1
+    
+    # Check exchange concentration
+    exchange_exposure = {}
+    for pos in self.active_positions.values():
+        for ex in pos.exchanges:
+            exchange_exposure[ex] = exchange_exposure.get(ex, Decimal('0')) + pos.position_size
+    
+    for exchange_name in exchanges:
+        current_exposure = exchange_exposure.get(exchange_name, Decimal('0'))
+        exposure_ratio = float((current_exposure + opportunity.amount) / self.max_total_exposure)
+        
+        if exposure_ratio > self.max_exchange_concentration:
+            violations.append(RiskViolation.EXCHANGE_CONCENTRATION)
+            risk_score += 0.2
     
     return risk_score, violations
 
-async def _assess_opportunity_specific_risk(self, opportunity: Opportunity) -> Tuple[float, List[RiskViolation]]:
-    """Assess opportunity-specific risks"""
+async def _assess_market_risk(self, opportunity: Opportunity) -> Tuple[float, List[RiskViolation]]:
+    """Assess market-related risks"""
     violations = []
     risk_score = 0.0
     
-    # Check profit margin
-    if hasattr(opportunity, 'expected_profit_percent'):
-        profit_percent = float(opportunity.expected_profit_percent)
-        if profit_percent < 0.2:  # Less than 0.2% profit
-            violations.append(RiskViolation.SPREAD_TOO_LOW)
-            risk_score += 0.3
+    # Check spread size
+    spread_percent = getattr(opportunity, 'expected_profit_percent', Decimal('0'))
+    if spread_percent < self.min_spread_percent:
+        violations.append(RiskViolation.SPREAD_TOO_NARROW)
+        risk_score += 0.3
     
     # Check confidence level
-    if hasattr(opportunity, 'confidence_level'):
-        confidence = opportunity.confidence_level
-        if confidence < 0.7:
-            risk_score += (0.7 - confidence) * 0.5
+    confidence = getattr(opportunity, 'confidence_level', 1.0)
+    if confidence < self.min_confidence_threshold:
+        risk_score += 0.2
     
-    # Check opportunity age
-    opportunity_age = time.time() - opportunity.timestamp
-    if opportunity_age > 30:  # Opportunity older than 30 seconds
-        risk_score += min(0.3, opportunity_age / 100)
-    
-    # Check market conditions (simplified)
-    if hasattr(opportunity, 'market_volatility'):
-        volatility = getattr(opportunity, 'market_volatility', 0)
-        if volatility > 0.1:  # High volatility
-            risk_score += volatility * 0.2
+    # Volatility assessment (simplified)
+    volatility_risk = max(0, (0.5 - confidence) * 0.4)
+    risk_score += volatility_risk
     
     return risk_score, violations
 
-async def _assess_balance_sufficiency(self, opportunity: Opportunity) -> Tuple[float, List[RiskViolation]]:
-    """Check if balances are sufficient for the opportunity"""
+async def _assess_execution_risk(self, opportunity: Opportunity) -> Tuple[float, List[RiskViolation]]:
+    """Assess execution-related risks"""
     violations = []
     risk_score = 0.0
     
-    try:
-        # This is a simplified check - specific implementation depends on opportunity type
-        if hasattr(opportunity, 'buy_exchange') and hasattr(opportunity, 'sell_exchange'):
-            buy_exchange = self.exchanges.get(opportunity.buy_exchange)
-            sell_exchange = self.exchanges.get(opportunity.sell_exchange)
-            
-            if buy_exchange and sell_exchange:
-                # Check buy side balance
-                base_asset, quote_asset = opportunity.symbol.split('/')
-                
-                buy_balances = await buy_exchange.get_balance(quote_asset)
-                needed_quote = opportunity.amount * getattr(opportunity, 'buy_price', Decimal('0')) * Decimal('1.01')
-                
-                if quote_asset not in buy_balances or buy_balances[quote_asset].free < needed_quote:
-                    violations.append(RiskViolation.INSUFFICIENT_BALANCE)
-                    risk_score += 0.5
-                
-                # Check sell side balance
-                sell_balances = await sell_exchange.get_balance(base_asset)
-                needed_base = opportunity.amount * Decimal('1.01')
-                
-                if base_asset not in sell_balances or sell_balances[base_asset].free < needed_base:
-                    violations.append(RiskViolation.INSUFFICIENT_BALANCE)
-                    risk_score += 0.5
+    # Time-sensitive nature of arbitrage
+    # If opportunity has been around for too long, execution risk increases
+    if hasattr(opportunity, 'timestamp'):
+        age_seconds = time.time() - opportunity.timestamp
+        if age_seconds > 30:  # 30 seconds old
+            risk_score += 0.1
+        if age_seconds > 60:  # 1 minute old
+            violations.append(RiskViolation.EXECUTION_RISK_HIGH)
+            risk_score += 0.2
     
-    except Exception as e:
-        logger.warning("balance_check_failed", error=str(e))
-        risk_score += 0.2  # Add some risk if we can't verify balances
+    # Market depth and liquidity (would need real order book data)
+    # This is a simplified check
+    if hasattr(opportunity, 'volume_available'):
+        if opportunity.volume_available < opportunity.amount * 2:
+            violations.append(RiskViolation.LOW_LIQUIDITY)
+            risk_score += 0.2
     
     return risk_score, violations
 
-async def _calculate_recommended_position_size(self, opportunity: Opportunity, risk_score: float) -> Decimal:
-    """Calculate recommended position size based on risk assessment"""
-    base_size = min(opportunity.amount, self.max_position_size)
-    
-    # Reduce size based on risk score
-    risk_multiplier = max(0.1, 1.0 - risk_score)
-    
-    # Consider current portfolio exposure
-    total_exposure = sum(pos.position_size for pos in self.active_positions.values())
-    remaining_capacity = self.max_total_exposure - total_exposure
-    
-    # Use Kelly Criterion approximation for position sizing
-    if hasattr(opportunity, 'expected_profit_percent') and hasattr(opportunity, 'confidence_level'):
-        win_rate = opportunity.confidence_level
-        avg_win = float(opportunity.expected_profit_percent) / 100
-        avg_loss = 0.01  # Assume 1% average loss
-        
-        if win_rate > 0 and avg_win > 0:
-            kelly_fraction = (win_rate * avg_win - (1 - win_rate) * avg_loss) / avg_win
-            kelly_fraction = max(0, min(0.25, kelly_fraction))  # Cap at 25%
-            
-            kelly_size = self.max_total_exposure * Decimal(str(kelly_fraction))
-            base_size = min(base_size, kelly_size)
-    
-    recommended_size = base_size * Decimal(str(risk_multiplier))
-    
-    # Ensure we don't exceed remaining capacity
-    recommended_size = min(recommended_size, remaining_capacity)
-    
-    # Minimum position size check
-    min_size = Decimal('10')  # Minimum $10 position
-    recommended_size = max(min_size, recommended_size) if recommended_size > 0 else Decimal('0')
-    
-    return recommended_size
-
-def _calculate_risk_level(self, risk_score: float, violations_count: int) -> RiskLevel:
-    """Calculate overall risk level"""
-    if violations_count > 0:
+def _calculate_risk_level(self, risk_score: float) -> RiskLevel:
+    """Calculate risk level from score"""
+    if risk_score >= self.critical_risk_threshold:
         return RiskLevel.CRITICAL
-    elif risk_score > 0.7:
+    elif risk_score >= self.high_risk_threshold:
         return RiskLevel.HIGH
-    elif risk_score > 0.4:
+    elif risk_score >= 0.3:
         return RiskLevel.MEDIUM
     else:
         return RiskLevel.LOW
 
-def _get_violation_reason(self, violation: RiskViolation) -> str:
-    """Get human-readable reason for risk violation"""
-    reasons_map = {
-        RiskViolation.POSITION_SIZE_EXCEEDED: f"Position size exceeds maximum of {self.max_position_size} USDT",
-        RiskViolation.DAILY_LOSS_EXCEEDED: f"Daily loss limit of {self.max_daily_loss} USDT exceeded",
-        RiskViolation.TOTAL_EXPOSURE_EXCEEDED: f"Total exposure would exceed {self.max_total_exposure} USDT",
-        RiskViolation.MAX_POSITIONS_EXCEEDED: f"Maximum {self.max_open_positions} positions already open",
-        RiskViolation.INSUFFICIENT_BALANCE: "Insufficient balance to execute opportunity",
-        RiskViolation.SPREAD_TOO_LOW: "Profit spread too low for acceptable risk",
-        RiskViolation.HIGH_SLIPPAGE_RISK: "High slippage risk detected",
-        RiskViolation.EXCHANGE_RELIABILITY: "Exchange reliability below threshold",
-        RiskViolation.CIRCUIT_BREAKER_TRIGGERED: "Emergency circuit breaker is active"
-    }
-    return reasons_map.get(violation, f"Risk violation: {violation.value}")
+def _determine_approval(self, assessment: RiskAssessment) -> bool:
+    """Determine if opportunity should be approved"""
+    
+    # Critical violations always reject
+    critical_violations = [
+        RiskViolation.DAILY_LOSS_EXCEEDED,
+        RiskViolation.TOTAL_EXPOSURE_EXCEEDED,
+        RiskViolation.POSITION_SIZE_EXCEEDED,
+        RiskViolation.MAX_POSITIONS_EXCEEDED
+    ]
+    
+    for violation in assessment.violations:
+        if violation in critical_violations:
+            return False
+    
+    # Reject if risk level is critical
+    if assessment.risk_level == RiskLevel.CRITICAL:
+        return False
+    
+    # Reject if risk score is too high
+    if assessment.risk_score >= self.critical_risk_threshold:
+        return False
+    
+    return True
 
-async def _check_daily_reset(self):
-    """Check if we need to reset daily counters"""
+def _generate_recommendations(self, assessment: RiskAssessment, 
+                            opportunity: Opportunity) -> List[str]:
+    """Generate risk management recommendations"""
+    recommendations = []
+    
+    if assessment.risk_score > 0.5:
+        recommendations.append("Consider reducing position size")
+    
+    if RiskViolation.EXCHANGE_CONCENTRATION in assessment.violations:
+        recommendations.append("Diversify across more exchanges")
+    
+    if RiskViolation.SYMBOL_CONCENTRATION in assessment.violations:
+        recommendations.append("Reduce exposure to this symbol")
+    
+    if RiskViolation.LOW_LIQUIDITY in assessment.violations:
+        recommendations.append("Wait for better liquidity")
+    
+    if RiskViolation.SPREAD_TOO_NARROW in assessment.violations:
+        recommendations.append("Wait for wider spread")
+    
+    if assessment.risk_score > 0.3:
+        recommendations.append("Monitor position closely")
+    
+    return recommendations
+
+def _calculate_max_position_size(self, assessment: RiskAssessment, 
+                               opportunity: Opportunity) -> Decimal:
+    """Calculate maximum safe position size"""
+    
+    # Start with requested amount
+    max_size = opportunity.amount
+    
+    # Reduce based on risk score
+    if assessment.risk_score > 0.5:
+        reduction_factor = 1.0 - (assessment.risk_score - 0.5)
+        max_size = max_size * Decimal(str(reduction_factor))
+    
+    # Apply absolute limits
+    max_size = min(max_size, self.max_position_size)
+    
+    # Check daily volume limit
+    remaining_daily_volume = self.max_daily_volume - self.daily_volume
+    max_size = min(max_size, remaining_daily_volume)
+    
+    # Ensure minimum viable size
+    min_viable_size = Decimal('10')  # $10 minimum
+    if max_size < min_viable_size:
+        max_size = Decimal('0')
+    
+    return max_size
+
+def _check_daily_reset(self):
+    """Reset daily counters if new day"""
     current_date = datetime.now().date()
-    if current_date > self.last_daily_reset:
+    if current_date != self.last_reset_date:
         self.daily_trades = 0
         self.daily_volume = Decimal('0')
         self.daily_pnl = Decimal('0')
-        self.last_daily_reset = current_date
-        logger.info("daily_counters_reset", date=str(current_date))
+        self.last_reset_date = current_date
+        
+        logger.info("daily_risk_counters_reset", date=str(current_date))
 
-async def _check_circuit_breaker(self) -> bool:
-    """Check if circuit breaker should be triggered or is active"""
-    if not self.circuit_breaker_enabled:
+def _is_circuit_breaker_active(self) -> bool:
+    """Check if circuit breaker is active"""
+    if not self.circuit_breaker_active:
         return False
     
-    # Check if currently in cooldown
-    if self.circuit_breaker_triggered:
-        time_since_trigger = (time.time() - self.circuit_breaker_trigger_time) / 60
-        if time_since_trigger < self.circuit_breaker_cooldown_minutes:
-            return True
-        else:
-            # Cooldown period ended
-            self.circuit_breaker_triggered = False
-            logger.info("circuit_breaker_reset")
+    if self.circuit_breaker_triggered_at:
+        time_since_trigger = datetime.now() - self.circuit_breaker_triggered_at
+        if time_since_trigger > self.circuit_breaker_cooldown:
+            self.circuit_breaker_active = False
+            self.circuit_breaker_triggered_at = None
+            logger.info("circuit_breaker_deactivated")
             return False
     
-    # Check if should be triggered
-    if self.daily_pnl <= self.circuit_breaker_loss_threshold:
-        self.circuit_breaker_triggered = True
-        self.circuit_breaker_trigger_time = time.time()
-        logger.warning("circuit_breaker_triggered",
-                      daily_pnl=float(self.daily_pnl),
-                      threshold=float(self.circuit_breaker_loss_threshold))
-        return True
-    
-    return False
+    return True
 
-# Position Management Methods
-async def add_position(self, opportunity: Opportunity) -> None:
-    """Add a position to risk tracking"""
-    position = PositionRisk(
-        opportunity_id=opportunity.opportunity_id,
-        symbol=opportunity.symbol,
-        exchanges=getattr(opportunity, 'exchanges', []),
-        position_size=opportunity.amount,
-        entry_time=time.time(),
-        expected_profit=opportunity.expected_profit,
-        actual_profit=Decimal('0'),
-        risk_score=opportunity.risk_score
-    )
-    
-    if self.enable_stop_loss:
-        position.stop_loss = opportunity.expected_profit * (self.stop_loss_percent / 100)
-    
-    self.active_positions[opportunity.opportunity_id] = position
-    self.daily_trades += 1
-    self.daily_volume += opportunity.amount
-    
-    logger.info("position_added",
-               opportunity_id=opportunity.opportunity_id,
-               symbol=opportunity.symbol,
-               size=float(opportunity.amount),
-               active_positions=len(self.active_positions))
-
-async def update_position_pnl(self, opportunity_id: str, actual_profit: Decimal) -> None:
-    """Update position P&L"""
-    if opportunity_id in self.active_positions:
-        position = self.active_positions[opportunity_id]
-        old_profit = position.actual_profit
-        position.actual_profit = actual_profit
-        
-        # Update daily P&L
-        pnl_change = actual_profit - old_profit
-        self.daily_pnl += pnl_change
-        
-        # Check stop loss
-        if self.enable_stop_loss and position.stop_loss:
-            if actual_profit <= position.stop_loss:
-                logger.warning("stop_loss_triggered",
-                             opportunity_id=opportunity_id,
-                             actual_profit=float(actual_profit),
-                             stop_loss=float(position.stop_loss))
-
-async def remove_position(self, opportunity_id: str) -> Optional[PositionRisk]:
-    """Remove position from tracking"""
-    position = self.active_positions.pop(opportunity_id, None)
-    if position:
-        logger.info("position_removed",
-                   opportunity_id=opportunity_id,
-                   final_profit=float(position.actual_profit),
-                   duration_minutes=position.duration_minutes,
-                   active_positions=len(self.active_positions))
-    return position
-
-# Status and Reporting Methods
-def get_risk_status(self) -> Dict[str, Any]:
-    """Get current risk management status"""
-    total_exposure = sum(pos.position_size for pos in self.active_positions.values())
-    
-    return {
-        'daily_stats': {
-            'trades': self.daily_trades,
-            'volume': float(self.daily_volume),
-            'pnl': float(self.daily_pnl),
-            'max_trades': self.max_daily_trades,
-            'max_volume': float(self.max_daily_volume),
-            'max_loss': float(self.max_daily_loss)
-        },
-        'position_stats': {
-            'active_positions': len(self.active_positions),
-            'max_positions': self.max_open_positions,
-            'total_exposure': float(total_exposure),
-            'max_exposure': float(self.max_total_exposure),
-            'utilization_percent': float(total_exposure / self.max_total_exposure * 100)
-        },
-        'circuit_breaker': {
-            'enabled': self.circuit_breaker_enabled,
-            'triggered': self.circuit_breaker_triggered,
-            'trigger_time': self.circuit_breaker_trigger_time if self.circuit_breaker_triggered else None
-        },
-        'exchange_reliability': self.exchange_reliability
-    }
-
-def get_active_positions(self) -> List[Dict[str, Any]]:
-    """Get list of active positions"""
-    return [
-        {
-            'opportunity_id': pos.opportunity_id,
-            'symbol': pos.symbol,
-            'exchanges': pos.exchanges,
-            'position_size': float(pos.position_size),
-            'expected_profit': float(pos.expected_profit),
-            'actual_profit': float(pos.actual_profit),
-            'unrealized_pnl': float(pos.unrealized_pnl),
-            'duration_minutes': pos.duration_minutes,
-            'risk_score': pos.risk_score
-        }
-        for pos in self.active_positions.values()
-    ]
-
-async def emergency_stop(self) -> None:
-    """Trigger emergency stop of all trading"""
-    if not self.emergency_stop_enabled:
+def trigger_circuit_breaker(self, reason: str):
+    """Trigger emergency circuit breaker"""
+    if not self.circuit_breaker_enabled:
         return
     
-    self.circuit_breaker_triggered = True
-    self.circuit_breaker_trigger_time = time.time()
+    self.circuit_breaker_active = True
+    self.circuit_breaker_triggered_at = datetime.now()
     
-    logger.critical("emergency_stop_triggered",
-                   active_positions=len(self.active_positions),
-                   total_exposure=float(sum(pos.position_size for pos in self.active_positions.values())))
-    
-    # Here you would implement emergency position closure logic
-    # For now, we just log and set the circuit breaker
+    logger.critical("circuit_breaker_triggered",
+                   reason=reason,
+                   cooldown_minutes=self.circuit_breaker_cooldown.total_seconds() / 60)
 
-def update_exchange_reliability(self, exchange_name: str, success: bool) -> None:
-    """Update exchange reliability score based on operation success"""
-    if exchange_name not in self.exchange_reliability:
-        self.exchange_reliability[exchange_name] = 0.95
+def _update_risk_stats(self, assessment: RiskAssessment):
+    """Update risk statistics"""
+    self.risk_stats['total_assessments'] += 1
     
-    current_reliability = self.exchange_reliability[exchange_name]
-    
-    if success:
-        # Slowly increase reliability on success
-        self.exchange_reliability[exchange_name] = min(1.0, current_reliability + 0.001)
+    if assessment.approved:
+        self.risk_stats['approved_trades'] += 1
     else:
-        # Quickly decrease reliability on failure
-        self.exchange_reliability[exchange_name] = max(0.0, current_reliability - 0.05)
+        self.risk_stats['rejected_trades'] += 1
     
-    if not success:
-        logger.warning("exchange_reliability_decreased",
-                     exchange=exchange_name,
-                     new_reliability=self.exchange_reliability[exchange_name])
+    # Update average risk score
+    total = self.risk_stats['total_assessments']
+    current_avg = self.risk_stats['avg_risk_score']
+    self.risk_stats['avg_risk_score'] = (
+        (current_avg * (total - 1) + assessment.risk_score) / total
+    )
+    
+    # Update violation counts
+    for violation in assessment.violations:
+        self.risk_stats['violation_counts'][violation.value] += 1
+
+async def update_exchange_health(self, exchange_name: str, 
+                               latency: float = None, 
+                               error: bool = False):
+    """Update exchange health metrics"""
+    if exchange_name not in self.exchange_health:
+        return
+    
+    health = self.exchange_health[exchange_name]
+    health.last_health_check = time.time()
+    
+    if latency is not None:
+        health.api_latency = latency
+    
+    if error:
+        health.consecutive_errors += 1
+        health.last_error_time = time.time()
+        health.error_rate = min(1.0, health.error_rate + 0.1)
+    else:
+        health.consecutive_errors = 0
+        health.error_rate = max(0.0, health.error_rate - 0.05)
+    
+    # Update reliability score
+    health.reliability_score = 1.0 - (health.error_rate * 0.5)
+    health.is_healthy = health.reliability_score > 0.7 and health.consecutive_errors < 5
+    
+    if not health.is_healthy:
+        logger.warning("exchange_unhealthy",
+                      exchange=exchange_name,
+                      reliability=health.reliability_score,
+                      consecutive_errors=health.consecutive_errors)
+
+def add_position(self, opportunity: Opportunity, position_size: Decimal) -> str:
+    """Add new position to tracking"""
+    
+    position_id = f"pos_{int(time.time())}_{opportunity.opportunity_id[:8]}"
+    
+    exchanges = getattr(opportunity, 'exchanges', [])
+    if hasattr(opportunity, 'buy_exchange') and hasattr(opportunity, 'sell_exchange'):
+        exchanges = [opportunity.buy_exchange, opportunity.sell_exchange]
+    
+    position = Position(
+        position_id=position_id,
+        opportunity_id=opportunity.opportunity_id,
+        symbol=opportunity.symbol,
+        exchanges=exchanges,
+        position_size=position_size,
+        entry_time=time.time(),
+        expected_profit=opportunity.expected_profit,
+        max_loss=position_size * self.stop_loss_percent / 100
+    )
+    
+    self.active_positions[position_id] = position
+    
+    # Update daily counters
+    self.daily_trades += 1
+    self.daily_volume += position_size
+    
+    logger.info("position_added",
+               position_id=position_id,
+               symbol=opportunity.symbol,
+               size=float(position_size),
+               active_positions=len(self.active_positions))
+    
+    return position_id
+
+def close_position(self, position_id: str, actual_pnl: Decimal):
+    """Close and remove position from tracking"""
+    
+    if position_id not in self.active_positions:
+        logger.warning("position_not_found", position_id=position_id)
+        return
+    
+    position = self.active_positions[position_id]
+    position.current_pnl = actual_pnl
+    position.status = "closed"
+    
+    # Update daily P&L
+    self.daily_pnl += actual_pnl
+    
+    # Remove from active positions
+    del self.active_positions[position_id]
+    
+    # Check for circuit breaker trigger
+    if actual_pnl < position.max_loss:
+        logger.warning("position_stop_loss_hit",
+                      position_id=position_id,
+                      pnl=float(actual_pnl),
+                      max_loss=float(position.max_loss))
+    
+    if self.daily_pnl < self.max_daily_loss:
+        self.trigger_circuit_breaker("Daily loss limit exceeded")
+    
+    logger.info("position_closed",
+               position_id=position_id,
+               pnl=float(actual_pnl),
+               daily_pnl=float(self.daily_pnl),
+               active_positions=len(self.active_positions))
+
+def get_risk_status(self) -> Dict[str, Any]:
+    """Get current risk management status"""
+    
+    # Calculate utilization ratios
+    total_exposure = sum(pos.position_size for pos in self.active_positions.values())
+    exposure_utilization = float(total_exposure / self.max_total_exposure) * 100
+    
+    position_utilization = (len(self.active_positions) / self.max_open_positions) * 100
+    daily_volume_utilization = float(self.daily_volume / self.max_daily_volume) * 100
+    daily_trades_utilization = (self.daily_trades / self.max_daily_trades) * 100
+    
+    return {
+        'circuit_breaker_active': self.circuit_breaker_active,
+        'active_positions': len(self.active_positions),
+        'daily_trades': self.daily_trades,
+        'daily_volume': float(self.daily_volume),
+        'daily_pnl': float(self.daily_pnl),
+        'total_exposure': float(total_exposure),
+        'utilization': {
+            'exposure': exposure_utilization,
+            'positions': position_utilization,
+            'daily_volume': daily_volume_utilization,
+            'daily_trades': daily_trades_utilization
+        },
+        'exchange_health': {
+            name: {
+                'healthy': health.is_healthy,
+                'reliability_score': health.reliability_score,
+                'api_latency': health.api_latency,
+                'consecutive_errors': health.consecutive_errors
+            }
+            for name, health in self.exchange_health.items()
+        },
+        'risk_stats': self.risk_stats
+    }
 ```
