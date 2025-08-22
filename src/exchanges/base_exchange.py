@@ -1,16 +1,20 @@
+#!/usr/bin/env python3
 “””
 Base Exchange Interface for SmartArb Engine
-Defines the standard interface that all exchange connectors must implement
+Abstract base class defining the standard interface for all exchange implementations
 “””
 
 import asyncio
+import ccxt.async_support as ccxt
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from typing import Dict, List, Optional, Any, Tuple
 from decimal import Decimal
+from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional, Any
-import time
 import structlog
+import time
+from datetime import datetime, timedelta
+import json
 
 logger = structlog.get_logger(**name**)
 
@@ -19,25 +23,55 @@ class OrderSide(Enum):
 BUY = “buy”
 SELL = “sell”
 
+class OrderType(Enum):
+“”“Order type enumeration”””
+MARKET = “market”
+LIMIT = “limit”
+STOP_LIMIT = “stop_limit”
+
 class OrderStatus(Enum):
 “”“Order status enumeration”””
+PENDING = “pending”
 OPEN = “open”
 FILLED = “filled”
-CANCELED = “canceled”
-PARTIALLY_FILLED = “partially_filled”
+CANCELLED = “cancelled”
 REJECTED = “rejected”
+EXPIRED = “expired”
 
-class ExchangeError(Exception):
-“”“Base exception for exchange-related errors”””
-pass
+@dataclass
+class OrderBook:
+“”“Order book data structure”””
+symbol: str
+bids: List[Tuple[Decimal, Decimal]]  # [(price, amount), …]
+asks: List[Tuple[Decimal, Decimal]]  # [(price, amount), …]
+timestamp: float
 
-class ExchangeConnectionError(ExchangeError):
-“”“Exception for connection-related errors”””
-pass
+```
+@property
+def best_bid(self) -> Optional[Tuple[Decimal, Decimal]]:
+    """Get best bid price and amount"""
+    return self.bids[0] if self.bids else None
 
-class ExchangeAPIError(ExchangeError):
-“”“Exception for API-related errors”””
-pass
+@property
+def best_ask(self) -> Optional[Tuple[Decimal, Decimal]]:
+    """Get best ask price and amount"""
+    return self.asks[0] if self.asks else None
+
+@property
+def spread(self) -> Optional[Decimal]:
+    """Get bid-ask spread"""
+    if self.best_bid and self.best_ask:
+        return self.best_ask[0] - self.best_bid[0]
+    return None
+
+@property
+def spread_percentage(self) -> Optional[Decimal]:
+    """Get spread as percentage of mid price"""
+    if self.spread and self.best_bid and self.best_ask:
+        mid_price = (self.best_bid[0] + self.best_ask[0]) / 2
+        return (self.spread / mid_price) * 100
+    return None
+```
 
 @dataclass
 class Ticker:
@@ -51,262 +85,347 @@ timestamp: float
 
 ```
 @property
-def spread(self) -> Decimal:
-    """Calculate bid-ask spread"""
-    return self.ask - self.bid
-
-@property
-def spread_percent(self) -> Decimal:
-    """Calculate bid-ask spread as percentage"""
-    if self.ask > 0:
-        return (self.spread / self.ask) * 100
-    return Decimal('0')
-```
-
-@dataclass
-class OrderBookLevel:
-“”“Order book level data”””
-price: Decimal
-amount: Decimal
-
-@dataclass
-class OrderBook:
-“”“Order book data structure”””
-symbol: str
-bids: List[OrderBookLevel]
-asks: List[OrderBookLevel]
-timestamp: float
-
-```
-@property
-def best_bid(self) -> Optional[OrderBookLevel]:
-    """Get best bid (highest buy price)"""
-    return self.bids[0] if self.bids else None
-
-@property
-def best_ask(self) -> Optional[OrderBookLevel]:
-    """Get best ask (lowest sell price)"""
-    return self.asks[0] if self.asks else None
-
-@property
-def spread(self) -> Decimal:
-    """Calculate spread between best bid and ask"""
-    if self.best_bid and self.best_ask:
-        return self.best_ask.price - self.best_bid.price
-    return Decimal('0')
+def mid_price(self) -> Decimal:
+    """Get mid price"""
+    return (self.bid + self.ask) / 2
 ```
 
 @dataclass
 class Balance:
-“”“Account balance data”””
+“”“Account balance data structure”””
 asset: str
-free: Decimal  # Available for trading
-locked: Decimal  # Locked in orders
+free: Decimal
+locked: Decimal
+total: Decimal
 
 ```
-@property
-def total(self) -> Decimal:
-    """Total balance (free + locked)"""
-    return self.free + self.locked
+def __post_init__(self):
+    # Ensure total = free + locked
+    if self.total != self.free + self.locked:
+        self.total = self.free + self.locked
 ```
 
 @dataclass
-class Order:
-“”“Order data structure”””
-order_id: str
+class Trade:
+“”“Trade data structure”””
+id: str
 symbol: str
 side: OrderSide
 amount: Decimal
 price: Decimal
+cost: Decimal
+fee: Decimal
+fee_currency: str
+timestamp: float
+order_id: Optional[str] = None
+
+@dataclass
+class Order:
+“”“Order data structure”””
+id: str
+symbol: str
+side: OrderSide
+type: OrderType
+amount: Decimal
+price: Optional[Decimal]
 status: OrderStatus
-filled_amount: Decimal = Decimal(‘0’)
-average_price: Decimal = Decimal(‘0’)
-fees: Decimal = Decimal(‘0’)
-timestamp: float = 0
+filled: Decimal
+remaining: Decimal
+cost: Decimal
+fee: Decimal
+fee_currency: str
+timestamp: float
+trades: List[Trade]
 
-```
-@property
-def remaining_amount(self) -> Decimal:
-    """Calculate remaining unfilled amount"""
-    return self.amount - self.filled_amount
+class ExchangeError(Exception):
+“”“Base exception for exchange errors”””
+pass
 
-@property
-def is_filled(self) -> bool:
-    """Check if order is completely filled"""
-    return self.status == OrderStatus.FILLED
-```
+class ConnectionError(ExchangeError):
+“”“Exchange connection error”””
+pass
+
+class AuthenticationError(ExchangeError):
+“”“Exchange authentication error”””
+pass
+
+class InsufficientFundsError(ExchangeError):
+“”“Insufficient funds error”””
+pass
+
+class OrderError(ExchangeError):
+“”“Order-related error”””
+pass
+
+class RateLimitError(ExchangeError):
+“”“Rate limit exceeded error”””
+pass
 
 class BaseExchange(ABC):
 “””
-Abstract base class for all exchange connectors
+Abstract base class for all exchange implementations
 
 ```
-All exchange implementations must inherit from this class and implement
-the abstract methods to ensure consistent interface across exchanges.
+Provides a standardized interface for interacting with cryptocurrency exchanges
+with proper error handling, rate limiting, and connection management.
 """
 
 def __init__(self, config: Dict[str, Any]):
-    """Initialize exchange with configuration"""
+    """Initialize exchange"""
     self.config = config
-    self.name = config.get('name', 'Unknown')
-    self.api_key = config.get('api_key', '')
-    self.api_secret = config.get('api_secret', '')
-    self.sandbox = config.get('sandbox', False)
+    self.exchange_config = config.get('exchanges', {}).get(self.name, {})
+    self.enabled = self.exchange_config.get('enabled', False)
     
-    # Connection settings
-    self.base_url = config.get('base_url', '')
-    self.rate_limit = config.get('rate_limit', 10)  # requests per second
-    self.timeout = config.get('timeout', 30)  # seconds
-    
-    # Trading settings
-    self.min_order_size = Decimal(str(config.get('min_order_size', 10)))
-    self.max_order_size = Decimal(str(config.get('max_order_size', 100000)))
-    self.maker_fee = Decimal(str(config.get('maker_fee', 0.001)))
-    self.taker_fee = Decimal(str(config.get('taker_fee', 0.001)))
-    
-    # State tracking
-    self.is_connected = False
+    # Initialize CCXT exchange
+    self.ccxt_exchange = None
+    self.connected = False
     self.last_request_time = 0
-    self.request_count = 0
     
-    # Performance tracking
-    self.total_requests = 0
-    self.failed_requests = 0
-    self.avg_response_time = 0
+    # Rate limiting
+    self.rate_limit = self.exchange_config.get('rate_limit', 10)  # requests per second
+    self.min_request_interval = 1.0 / self.rate_limit
     
-# Connection Management
+    # Connection health
+    self.connection_errors = 0
+    self.max_connection_errors = 5
+    self.last_health_check = 0
+    self.health_check_interval = 60  # seconds
+    
+    # Trading pairs and market info
+    self.markets = {}
+    self.trading_pairs = set()
+    self.fees = {}
+    
+    # Order management
+    self.open_orders = {}
+    self.order_history = {}
+    
+    self.logger = structlog.get_logger(f"exchange.{self.name}")
+
+@property
 @abstractmethod
-async def connect(self) -> bool:
-    """Establish connection to the exchange"""
+def name(self) -> str:
+    """Exchange name"""
     pass
 
+@property
 @abstractmethod
-async def disconnect(self) -> None:
-    """Disconnect from the exchange"""
+def ccxt_id(self) -> str:
+    """CCXT exchange ID"""
     pass
 
-# Market Data
+async def initialize(self) -> bool:
+    """Initialize exchange connection"""
+    try:
+        if not self.enabled:
+            self.logger.info("exchange_disabled")
+            return False
+        
+        # Initialize CCXT exchange
+        self.ccxt_exchange = getattr(ccxt, self.ccxt_id)({
+            'apiKey': self.exchange_config.get('api_key'),
+            'secret': self.exchange_config.get('api_secret'),
+            'sandbox': self.exchange_config.get('sandbox', False),
+            'timeout': self.exchange_config.get('timeout', 30) * 1000,
+            'enableRateLimit': True,
+        })
+        
+        # Test connection
+        await self._test_connection()
+        
+        # Load markets
+        await self._load_markets()
+        
+        # Load trading pairs
+        self.trading_pairs = set(self.exchange_config.get('trading_pairs', []))
+        
+        self.connected = True
+        self.logger.info("exchange_initialized", 
+                       trading_pairs=len(self.trading_pairs),
+                       markets=len(self.markets))
+        
+        return True
+        
+    except Exception as e:
+        self.logger.error("exchange_initialization_failed", error=str(e))
+        return False
+
+async def shutdown(self):
+    """Shutdown exchange connection"""
+    if self.ccxt_exchange:
+        await self.ccxt_exchange.close()
+    self.connected = False
+    self.logger.info("exchange_shutdown_completed")
+
+async def _test_connection(self):
+    """Test exchange connection"""
+    try:
+        await self.ccxt_exchange.fetch_status()
+        self.connection_errors = 0
+    except Exception as e:
+        self.connection_errors += 1
+        self.logger.error("connection_test_failed", error=str(e))
+        raise ConnectionError(f"Connection test failed: {str(e)}")
+
+async def _load_markets(self):
+    """Load market information"""
+    try:
+        self.markets = await self.ccxt_exchange.load_markets()
+        self.logger.info("markets_loaded", count=len(self.markets))
+    except Exception as e:
+        self.logger.error("markets_load_failed", error=str(e))
+        raise
+
+async def _rate_limit(self):
+    """Implement rate limiting"""
+    current_time = time.time()
+    time_since_last_request = current_time - self.last_request_time
+    
+    if time_since_last_request < self.min_request_interval:
+        sleep_time = self.min_request_interval - time_since_last_request
+        await asyncio.sleep(sleep_time)
+    
+    self.last_request_time = time.time()
+
+async def _handle_request(self, func, *args, **kwargs):
+    """Handle API request with error handling and rate limiting"""
+    await self._rate_limit()
+    
+    try:
+        result = await func(*args, **kwargs)
+        self.connection_errors = 0
+        return result
+        
+    except ccxt.NetworkError as e:
+        self.connection_errors += 1
+        self.logger.warning("network_error", error=str(e), 
+                          connection_errors=self.connection_errors)
+        
+        if self.connection_errors >= self.max_connection_errors:
+            self.connected = False
+            raise ConnectionError(f"Too many connection errors: {str(e)}")
+        
+        raise ConnectionError(str(e))
+        
+    except ccxt.AuthenticationError as e:
+        self.logger.error("authentication_error", error=str(e))
+        raise AuthenticationError(str(e))
+        
+    except ccxt.InsufficientFunds as e:
+        self.logger.warning("insufficient_funds", error=str(e))
+        raise InsufficientFundsError(str(e))
+        
+    except ccxt.InvalidOrder as e:
+        self.logger.warning("invalid_order", error=str(e))
+        raise OrderError(str(e))
+        
+    except ccxt.RateLimitExceeded as e:
+        self.logger.warning("rate_limit_exceeded", error=str(e))
+        await asyncio.sleep(1)  # Wait before retrying
+        raise RateLimitError(str(e))
+        
+    except Exception as e:
+        self.logger.error("unexpected_error", error=str(e))
+        raise ExchangeError(str(e))
+
+# Abstract methods that must be implemented by subclasses
+
+@abstractmethod
+async def get_orderbook(self, symbol: str, limit: int = 20) -> OrderBook:
+    """Get order book for symbol"""
+    pass
+
 @abstractmethod
 async def get_ticker(self, symbol: str) -> Ticker:
-    """Get current ticker for symbol"""
+    """Get ticker for symbol"""
     pass
 
 @abstractmethod
-async def get_orderbook(self, symbol: str, depth: int = 10) -> OrderBook:
-    """Get current order book for symbol"""
+async def get_balance(self, asset: str = None) -> Dict[str, Balance]:
+    """Get account balance"""
     pass
 
-@abstractmethod
-async def get_balance(self, asset: Optional[str] = None) -> Dict[str, Balance]:
-    """Get account balance(s)"""
-    pass
-
-# Trading Operations
 @abstractmethod
 async def place_order(self, symbol: str, side: OrderSide, 
-                     amount: Decimal, price: Decimal,
-                     order_type: str = "limit") -> Order:
-    """Place a new order"""
+                     amount: Decimal, price: Optional[Decimal] = None,
+                     order_type: OrderType = OrderType.MARKET) -> Order:
+    """Place order"""
     pass
 
 @abstractmethod
 async def cancel_order(self, order_id: str, symbol: str) -> bool:
-    """Cancel an existing order"""
+    """Cancel order"""
     pass
 
 @abstractmethod
-async def get_order_status(self, order_id: str, symbol: str) -> Order:
-    """Get current status of an order"""
+async def get_order(self, order_id: str, symbol: str) -> Order:
+    """Get order status"""
     pass
 
-# Utility Methods
-async def _rate_limit(self) -> None:
-    """Implement rate limiting"""
-    now = time.time()
-    time_since_last = now - self.last_request_time
-    min_interval = 1.0 / self.rate_limit
+@abstractmethod
+async def get_open_orders(self, symbol: str = None) -> List[Order]:
+    """Get open orders"""
+    pass
+
+@abstractmethod
+async def get_trades(self, symbol: str, limit: int = 100) -> List[Trade]:
+    """Get trade history"""
+    pass
+
+# Health check methods
+
+async def health_check(self) -> Dict[str, Any]:
+    """Perform exchange health check"""
+    current_time = time.time()
     
-    if time_since_last < min_interval:
-        sleep_time = min_interval - time_since_last
-        await asyncio.sleep(sleep_time)
+    if current_time - self.last_health_check < self.health_check_interval:
+        return {"status": "ok", "cached": True}
     
-    self.last_request_time = time.time()
-    self.total_requests += 1
-
-def _handle_error(self, error: Exception, context: str = "") -> None:
-    """Handle and log errors consistently"""
-    self.failed_requests += 1
-    
-    error_msg = str(error)
-    logger.error("exchange_error",
-                exchange=self.name,
-                context=context,
-                error=error_msg,
-                error_type=type(error).__name__)
-    
-    # Re-raise as appropriate exchange error
-    if "connection" in error_msg.lower() or "timeout" in error_msg.lower():
-        raise ExchangeConnectionError(f"{self.name}: {error_msg}")
-    else:
-        raise ExchangeAPIError(f"{self.name}: {error_msg}")
-
-def normalize_symbol(self, symbol: str) -> str:
-    """Normalize symbol to exchange format"""
-    # Default implementation - override in specific exchanges
-    return symbol
-
-def normalize_amount(self, amount: Decimal) -> Decimal:
-    """Normalize amount to exchange precision"""
-    # Default implementation - override in specific exchanges
-    return amount.quantize(Decimal('0.00000001'))
-
-def normalize_price(self, price: Decimal) -> Decimal:
-    """Normalize price to exchange precision"""
-    # Default implementation - override in specific exchanges
-    return price.quantize(Decimal('0.00000001'))
-
-def get_trading_fee(self, is_maker: bool = True) -> Decimal:
-    """Get applicable trading fee"""
-    return self.maker_fee if is_maker else self.taker_fee
-
-def is_valid_order_size(self, amount: Decimal) -> bool:
-    """Check if order size is within limits"""
-    return self.min_order_size <= amount <= self.max_order_size
-
-def get_exchange_info(self) -> Dict[str, Any]:
-    """Get exchange information and status"""
-    return {
-        'name': self.name,
-        'connected': self.is_connected,
-        'sandbox': self.sandbox,
-        'total_requests': self.total_requests,
-        'failed_requests': self.failed_requests,
-        'error_rate': self.failed_requests / max(self.total_requests, 1) * 100,
-        'rate_limit': self.rate_limit,
-        'maker_fee': float(self.maker_fee),
-        'taker_fee': float(self.taker_fee)
-    }
-
-async def health_check(self) -> bool:
-    """Perform health check on exchange connection"""
     try:
-        if not self.is_connected:
-            return False
+        # Test basic connectivity
+        await self._test_connection()
         
-        # Test with a simple API call (server time)
-        # This should be implemented by each exchange
-        return True
+        # Check if we can fetch a ticker
+        if self.trading_pairs:
+            test_symbol = list(self.trading_pairs)[0]
+            await self.get_ticker(test_symbol)
+        
+        self.last_health_check = current_time
+        
+        return {
+            "status": "ok",
+            "connected": self.connected,
+            "connection_errors": self.connection_errors,
+            "trading_pairs": len(self.trading_pairs),
+            "last_check": current_time
+        }
         
     except Exception as e:
-        logger.warning("health_check_failed", exchange=self.name, error=str(e))
-        return False
+        return {
+            "status": "error",
+            "connected": False,
+            "error": str(e),
+            "connection_errors": self.connection_errors
+        }
 
-def __str__(self) -> str:
-    """String representation"""
-    return f"{self.name}Exchange(connected={self.is_connected})"
+def get_min_order_size(self, symbol: str) -> Decimal:
+    """Get minimum order size for symbol"""
+    market = self.markets.get(symbol)
+    if market and 'limits' in market and 'amount' in market['limits']:
+        return Decimal(str(market['limits']['amount']['min'] or 0))
+    return Decimal('0.001')  # Default minimum
 
-def __repr__(self) -> str:
-    """Detailed string representation"""
-    return (f"{self.name}Exchange(connected={self.is_connected}, "
-            f"requests={self.total_requests}, errors={self.failed_requests})")
+def get_price_precision(self, symbol: str) -> int:
+    """Get price precision for symbol"""
+    market = self.markets.get(symbol)
+    if market and 'precision' in market and 'price' in market['precision']:
+        return market['precision']['price']
+    return 8  # Default precision
+
+def get_amount_precision(self, symbol: str) -> int:
+    """Get amount precision for symbol"""
+    market = self.markets.get(symbol)
+    if market and 'precision' in market and 'amount' in market['precision']:
+        return market['precision']['amount']
+    return 8  # Default precision
 ```
