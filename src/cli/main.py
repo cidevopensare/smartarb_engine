@@ -100,621 +100,443 @@ async def start(ctx):
 config_path = ctx.obj[‘config_path’]
 
 ```
-with Progress(
-    SpinnerColumn(),
-    TextColumn("[progress.description]{task.description}"),
-    console=console
-) as progress:
-    
-    # Initialize
-    init_task = progress.add_task("Initializing SmartArb Engine...", total=None)
-    
-    cli_controller = SmartArbCLI()
-    if not await cli_controller.initialize(config_path):
-        console.print("[red]❌ Failed to initialize engine[/red]")
-        return
-    
-    progress.update(init_task, description="✅ Engine initialized")
-    
-    # Start engine
-    start_task = progress.add_task("Starting trading engine...", total=None)
-    
-    try:
-        if not await cli_controller.engine.initialize():
-            console.print("[red]❌ Engine initialization failed[/red]")
-            return
-        
-        if not await cli_controller.engine.start():
-            console.print("[red]❌ Engine start failed[/red]")
-            return
-        
-        progress.update(start_task, description="✅ Engine started successfully")
-        
-    except KeyboardInterrupt:
-        progress.update(start_task, description="🛑 Startup interrupted")
-        console.print("\n[yellow]Startup interrupted by user[/yellow]")
-        return
-    except Exception as e:
-        progress.update(start_task, description="❌ Startup failed")
-        console.print(f"\n[red]❌ Startup failed: {str(e)}[/red]")
-        return
+cli_instance = SmartArbCLI()
 
-# Show status and keep running
-console.print("\n[green]🚀 SmartArb Engine is now running![/green]")
-console.print("Press Ctrl+C to stop the engine\n")
+if not await cli_instance.initialize(config_path):
+    console.print("[red]❌ Failed to initialize CLI[/red]")
+    return
+
+console.print("[blue]🚀 Starting SmartArb Engine...[/blue]")
 
 try:
-    # Main monitoring loop
-    with Live(console=console, refresh_per_second=1) as live:
-        while cli_controller.engine.is_running:
-            status_panel = await create_status_panel(cli_controller.engine)
-            live.update(status_panel)
-            await asyncio.sleep(1)
-            
+    # Start the engine
+    await cli_instance.engine.start()
+    
 except KeyboardInterrupt:
-    console.print("\n[yellow]🛑 Shutdown signal received...[/yellow]")
+    console.print("\n[yellow]⚠️  Shutdown signal received[/yellow]")
     
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console
-    ) as progress:
-        stop_task = progress.add_task("Stopping SmartArb Engine...", total=None)
-        
-        await cli_controller.engine.shutdown()
-        progress.update(stop_task, description="✅ Engine stopped safely")
+    # Graceful shutdown
+    console.print("[blue]🛑 Stopping SmartArb Engine...[/blue]")
+    await cli_instance.engine.stop()
     
-    console.print("[green]✅ SmartArb Engine stopped successfully[/green]")
-```
+    console.print("[green]✅ Engine stopped successfully[/green]")
 
-@cli.command()
-@click.pass_context
-async def status(ctx):
-“”“Show current engine status”””
-config_path = ctx.obj[‘config_path’]
-
-```
-cli_controller = SmartArbCLI()
-if not await cli_controller.initialize(config_path):
-    return
-
-# Get status
-if cli_controller.engine.status == EngineStatus.STOPPED:
-    console.print("[yellow]Engine is currently stopped[/yellow]")
-    
-    # Show configuration status
-    await show_config_status(cli_controller.config_manager)
-    return
-
-# Show live status
-try:
-    await cli_controller.engine.initialize()
-    status = await cli_controller.engine.get_engine_status()
-    
-    status_panel = create_status_display(status)
-    console.print(status_panel)
-    
 except Exception as e:
-    console.print(f"[red]❌ Failed to get status: {str(e)}[/red]")
+    console.print(f"[red]❌ Engine error: {str(e)}[/red]")
 ```
 
 @cli.command()
 @click.pass_context
-async def config(ctx):
-“”“Show and manage configuration”””
+def status(ctx):
+“”“Show SmartArb Engine status”””
 config_path = ctx.obj[‘config_path’]
 
 ```
+# Create a simple status display
+console.print("[blue]📊 SmartArb Engine Status[/blue]")
+
+# Check configuration
 try:
     config_manager = ConfigManager(config_path)
-    await show_config_status(config_manager)
+    config = config_manager.get_config()
+    
+    # Create status table
+    status_table = Table(title="System Status", box=box.ROUNDED)
+    status_table.add_column("Component", style="cyan")
+    status_table.add_column("Status", style="green")
+    status_table.add_column("Details", style="white")
+    
+    # Configuration status
+    status_table.add_row(
+        "Configuration",
+        "✅ Loaded",
+        f"From: {config_path}"
+    )
+    
+    # Exchange status
+    exchanges = config.get('exchanges', {})
+    enabled_exchanges = [name for name, cfg in exchanges.items() if cfg.get('enabled')]
+    
+    status_table.add_row(
+        "Exchanges",
+        f"✅ {len(enabled_exchanges)} enabled" if enabled_exchanges else "⚠️  None enabled",
+        f"Available: {', '.join(enabled_exchanges) if enabled_exchanges else 'None'}"
+    )
+    
+    # Strategy status
+    strategies = config.get('strategies', {})
+    enabled_strategies = [name for name, cfg in strategies.items() if cfg.get('enabled')]
+    
+    status_table.add_row(
+        "Strategies",
+        f"✅ {len(enabled_strategies)} enabled" if enabled_strategies else "⚠️  None enabled",
+        f"Active: {', '.join(enabled_strategies) if enabled_strategies else 'None'}"
+    )
+    
+    # AI status
+    ai_config = config.get('ai', {})
+    ai_enabled = ai_config.get('enabled', False)
+    ai_key = ai_config.get('claude_api_key', '')
+    
+    status_table.add_row(
+        "AI System",
+        "✅ Enabled" if ai_enabled and ai_key else "⚠️  Disabled",
+        f"Model: {ai_config.get('model', 'N/A')}" if ai_enabled else "Not configured"
+    )
+    
+    console.print(status_table)
     
 except Exception as e:
-    console.print(f"[red]❌ Failed to load configuration: {str(e)}[/red]")
+    console.print(f"[red]❌ Status check failed: {str(e)}[/red]")
 ```
 
 @cli.command()
-@click.option(’–exchange’, ‘-e’, help=‘Test specific exchange’)
 @click.pass_context
-async def test(ctx, exchange):
-“”“Test exchange connections and configuration”””
+def config_validate(ctx):
+“”“Validate configuration”””
 config_path = ctx.obj[‘config_path’]
 
 ```
-cli_controller = SmartArbCLI()
-if not await cli_controller.initialize(config_path):
-    return
-
-console.print("[cyan]🔍 Testing SmartArb Engine configuration...[/cyan]\n")
-
-with Progress(
-    SpinnerColumn(),
-    TextColumn("[progress.description]{task.description}"),
-    console=console
-) as progress:
-    
-    # Test configuration
-    config_task = progress.add_task("Testing configuration...", total=None)
-    
-    try:
-        await cli_controller.engine.initialize()
-        progress.update(config_task, description="✅ Configuration valid")
-        
-        # Test exchanges
-        if exchange:
-            await test_single_exchange(cli_controller.engine, exchange, progress)
-        else:
-            await test_all_exchanges(cli_controller.engine, progress)
-        
-        # Test strategies
-        strategy_task = progress.add_task("Testing strategies...", total=None)
-        # Add strategy testing logic here
-        progress.update(strategy_task, description="✅ Strategies configured")
-        
-    except Exception as e:
-        progress.update(config_task, description=f"❌ Configuration error: {str(e)}")
-```
-
-@cli.command()
-@click.option(’–format’, ‘-f’, type=click.Choice([‘table’, ‘json’]), default=‘table’)
-@click.pass_context
-async def portfolio(ctx, format):
-“”“Show portfolio balances across exchanges”””
-config_path = ctx.obj[‘config_path’]
-
-```
-cli_controller = SmartArbCLI()
-if not await cli_controller.initialize(config_path):
-    return
+console.print("[blue]🔍 Validating configuration...[/blue]")
 
 try:
-    await cli_controller.engine.initialize()
+    config_manager = ConfigManager(config_path)
+    validation_result = config_manager.validate_config()
     
-    if not cli_controller.engine.portfolio_manager:
-        console.print("[yellow]Portfolio manager not initialized[/yellow]")
-        return
-    
-    # Update portfolio
-    await cli_controller.engine.portfolio_manager.update_portfolio(force_update=True)
-    
-    # Get portfolio data
-    balances = cli_controller.engine.portfolio_manager.current_balances
-    
-    if format == 'json':
-        portfolio_data = {}
-        for asset, balance in balances.items():
-            portfolio_data[asset] = {
-                'total_balance': float(balance.total_balance),
-                'available': float(balance.available_balance),
-                'locked': float(balance.locked_balance),
-                'exchanges': {
-                    ex_name: {
-                        'total': float(ex_balance.total),
-                        'free': float(ex_balance.free),
-                        'locked': float(ex_balance.locked)
-                    }
-                    for ex_name, ex_balance in balance.exchange_balances.items()
-                }
-            }
+    if validation_result.valid:
+        console.print("[green]✅ Configuration is valid![/green]")
         
-        console.print(json.dumps(portfolio_data, indent=2))
+        if validation_result.warnings:
+            console.print("\n[yellow]⚠️  Warnings:[/yellow]")
+            for warning in validation_result.warnings:
+                console.print(f"  • {warning}")
     else:
-        show_portfolio_table(balances)
+        console.print("[red]❌ Configuration validation failed![/red]")
         
+        if validation_result.errors:
+            console.print("\n[red]🚫 Errors:[/red]")
+            for error in validation_result.errors:
+                console.print(f"  • {error}")
+        
+        if validation_result.warnings:
+            console.print("\n[yellow]⚠️  Warnings:[/yellow]")
+            for warning in validation_result.warnings:
+                console.print(f"  • {warning}")
+
 except Exception as e:
-    console.print(f"[red]❌ Failed to get portfolio: {str(e)}[/red]")
+    console.print(f"[red]❌ Validation failed: {str(e)}[/red]")
 ```
 
 @cli.command()
-@click.option(’–tail’, ‘-t’, default=50, help=‘Number of recent logs to show’)
+@click.pass_context
+def exchanges(ctx):
+“”“Show exchange information”””
+config_path = ctx.obj[‘config_path’]
+
+```
+console.print("[blue]🔗 Exchange Information[/blue]")
+
+try:
+    config_manager = ConfigManager(config_path)
+    config = config_manager.get_config()
+    
+    exchanges = config.get('exchanges', {})
+    
+    if not exchanges:
+        console.print("[yellow]⚠️  No exchanges configured[/yellow]")
+        return
+    
+    # Create exchanges table
+    exchanges_table = Table(title="Exchanges", box=box.ROUNDED)
+    exchanges_table.add_column("Exchange", style="cyan")
+    exchanges_table.add_column("Status", style="green")
+    exchanges_table.add_column("API Key", style="white")
+    exchanges_table.add_column("Sandbox", style="white")
+    exchanges_table.add_column("Rate Limit", style="white")
+    
+    for exchange_name, exchange_config in exchanges.items():
+        enabled = exchange_config.get('enabled', False)
+        status = "✅ Enabled" if enabled else "⚪ Disabled"
+        
+        api_key = exchange_config.get('api_key', '')
+        api_key_status = "✅ Set" if api_key and not any(x in api_key.lower() for x in ['your_', 'example']) else "❌ Missing"
+        
+        sandbox = "✅ Yes" if exchange_config.get('sandbox', False) else "⚪ No"
+        rate_limit = str(exchange_config.get('rate_limit', 'N/A'))
+        
+        exchanges_table.add_row(
+            exchange_name.upper(),
+            status,
+            api_key_status,
+            sandbox,
+            rate_limit
+        )
+    
+    console.print(exchanges_table)
+    
+except Exception as e:
+    console.print(f"[red]❌ Failed to load exchange info: {str(e)}[/red]")
+```
+
+@cli.command()
+@click.pass_context
+def strategies(ctx):
+“”“Show strategy information”””
+config_path = ctx.obj[‘config_path’]
+
+```
+console.print("[blue]🎯 Strategy Information[/blue]")
+
+try:
+    config_manager = ConfigManager(config_path)
+    config = config_manager.get_config()
+    
+    strategies = config.get('strategies', {})
+    
+    if not strategies:
+        console.print("[yellow]⚠️  No strategies configured[/yellow]")
+        return
+    
+    # Create strategies table
+    strategies_table = Table(title="Strategies", box=box.ROUNDED)
+    strategies_table.add_column("Strategy", style="cyan")
+    strategies_table.add_column("Status", style="green")
+    strategies_table.add_column("Priority", style="white")
+    strategies_table.add_column("Min Spread", style="white")
+    strategies_table.add_column("Max Position", style="white")
+    
+    for strategy_name, strategy_config in strategies.items():
+        enabled = strategy_config.get('enabled', False)
+        status = "✅ Enabled" if enabled else "⚪ Disabled"
+        
+        priority = str(strategy_config.get('priority', 'N/A'))
+        min_spread = f"{strategy_config.get('min_spread_percent', 'N/A')}%"
+        max_position = f"${strategy_config.get('max_position_size', 'N/A')}"
+        
+        strategies_table.add_row(
+            strategy_name.replace('_', ' ').title(),
+            status,
+            priority,
+            min_spread,
+            max_position
+        )
+    
+    console.print(strategies_table)
+    
+except Exception as e:
+    console.print(f"[red]❌ Failed to load strategy info: {str(e)}[/red]")
+```
+
+@cli.command()
+@click.option(’–limit’, ‘-l’, default=20, help=‘Number of log lines to show’)
 @click.option(’–follow’, ‘-f’, is_flag=True, help=‘Follow log output’)
-@click.option(’–level’, ‘-l’, type=click.Choice([‘DEBUG’, ‘INFO’, ‘WARNING’, ‘ERROR’]),
-help=‘Filter by log level’)
-def logs(tail, follow, level):
+@click.option(’–type’, ‘-t’, default=‘main’,
+type=click.Choice([‘main’, ‘trading’, ‘error’, ‘risk’, ‘ai’]),
+help=‘Log file type’)
+def logs(limit, follow, type):
 “”“Show SmartArb Engine logs”””
 
 ```
-log_file = Path("logs/smartarb.log")
+log_files = {
+    'main': 'logs/main.log',
+    'trading': 'logs/trading.log', 
+    'error': 'logs/error.log',
+    'risk': 'logs/risk.log',
+    'ai': 'logs/ai.log'
+}
+
+log_file = Path(log_files.get(type, 'logs/main.log'))
 
 if not log_file.exists():
-    console.print("[yellow]No log file found. Engine might not be running.[/yellow]")
+    console.print(f"[yellow]⚠️  Log file not found: {log_file}[/yellow]")
     return
 
+console.print(f"[blue]📋 {type.title()} Logs (last {limit} lines)[/blue]")
+
 try:
+    # Read last N lines
+    with open(log_file, 'r') as f:
+        lines = f.readlines()
+        recent_lines = lines[-limit:] if len(lines) > limit else lines
+    
+    for line in recent_lines:
+        line = line.strip()
+        if line:
+            # Color code log levels
+            if 'ERROR' in line:
+                console.print(f"[red]{line}[/red]")
+            elif 'WARNING' in line:
+                console.print(f"[yellow]{line}[/yellow]")
+            elif 'INFO' in line:
+                console.print(f"[green]{line}[/green]")
+            else:
+                console.print(line)
+    
     if follow:
-        console.print(f"[cyan]Following logs from {log_file}[/cyan]")
-        console.print("Press Ctrl+C to stop\n")
+        console.print("\n[blue]📡 Following logs... (Press Ctrl+C to stop)[/blue]")
         
-        # Implement tail -f functionality
+        # Simple tail -f implementation
         import subprocess
         try:
             subprocess.run(['tail', '-f', str(log_file)])
         except KeyboardInterrupt:
-            console.print("\n[yellow]Log following stopped[/yellow]")
-    else:
-        # Show recent logs
-        with open(log_file, 'r') as f:
-            lines = f.readlines()
-            
-        recent_lines = lines[-tail:] if len(lines) > tail else lines
-        
-        for line in recent_lines:
-            # Basic log level coloring
-            if 'ERROR' in line:
-                console.print(line.strip(), style="red")
-            elif 'WARNING' in line:
-                console.print(line.strip(), style="yellow")
-            elif 'INFO' in line:
-                console.print(line.strip(), style="green")
-            else:
-                console.print(line.strip())
-                
+            console.print("\n[yellow]📋 Log following stopped[/yellow]")
+
 except Exception as e:
     console.print(f"[red]❌ Failed to read logs: {str(e)}[/red]")
 ```
 
 @cli.command()
-@click.option(’–days’, ‘-d’, default=7, help=‘Days of history to show’)
 @click.pass_context
-async def performance(ctx, days):
-“”“Show trading performance metrics”””
+def test_connections(ctx):
+“”“Test exchange connections”””
 config_path = ctx.obj[‘config_path’]
 
 ```
-cli_controller = SmartArbCLI()
-if not await cli_controller.initialize(config_path):
-    return
+console.print("[blue]🔍 Testing exchange connections...[/blue]")
+
+cli_instance = SmartArbCLI()
+
+async def run_connection_tests():
+    if not await cli_instance.initialize(config_path):
+        console.print("[red]❌ Failed to initialize CLI[/red]")
+        return
+    
+    # Initialize engine
+    success = await cli_instance.engine.initialize()
+    
+    if not success:
+        console.print("[red]❌ Failed to initialize engine[/red]")
+        return
+    
+    # Test each exchange
+    for exchange_name, exchange in cli_instance.engine.exchanges.items():
+        console.print(f"\n[cyan]Testing {exchange_name.upper()}...[/cyan]")
+        
+        try:
+            health_check = await exchange.health_check()
+            
+            if health_check['status'] == 'ok':
+                console.print(f"[green]✅ {exchange_name.upper()}: Connected successfully[/green]")
+            else:
+                console.print(f"[red]❌ {exchange_name.upper()}: {health_check.get('error', 'Connection failed')}[/red]")
+                
+        except Exception as e:
+            console.print(f"[red]❌ {exchange_name.upper()}: {str(e)}[/red]")
+    
+    # Cleanup
+    await cli_instance.engine.shutdown()
 
 try:
-    await cli_controller.engine.initialize()
-    
-    # Get performance metrics
-    metrics = await cli_controller.engine.get_detailed_metrics()
-    
-    show_performance_metrics(metrics, days)
-    
+    asyncio.run(run_connection_tests())
 except Exception as e:
-    console.print(f"[red]❌ Failed to get performance metrics: {str(e)}[/red]")
+    console.print(f"[red]❌ Connection test failed: {str(e)}[/red]")
 ```
 
 @cli.command()
-@click.confirmation_option(prompt=‘Are you sure you want to stop the engine?’)
-async def stop():
-“”“Stop a running SmartArb Engine”””
+@click.option(’–output’, ‘-o’, type=click.Choice([‘table’, ‘json’]),
+default=‘table’, help=‘Output format’)
+@click.pass_context  
+def info(ctx, output):
+“”“Show system information”””
+config_path = ctx.obj[‘config_path’]
 
 ```
-# Implementation would send stop signal to running engine
-# This could be done via PID file, socket, or other IPC mechanism
-
-console.print("[yellow]🛑 Sending stop signal to SmartArb Engine...[/yellow]")
-
-# Check if engine is running (simplified check)
-pid_file = Path("smartarb.pid")
-if pid_file.exists():
-    try:
-        import os
-        import signal
-        
-        with open(pid_file, 'r') as f:
-            pid = int(f.read().strip())
-        
-        os.kill(pid, signal.SIGTERM)
-        console.print("[green]✅ Stop signal sent successfully[/green]")
-        
-        # Wait for graceful shutdown
-        time.sleep(2)
-        
-        if not pid_file.exists():
-            console.print("[green]✅ Engine stopped successfully[/green]")
-        else:
-            console.print("[yellow]⚠️  Engine may still be running[/yellow]")
-            
-    except (FileNotFoundError, ProcessLookupError):
-        console.print("[yellow]⚠️  Engine is not running[/yellow]")
-    except Exception as e:
-        console.print(f"[red]❌ Failed to stop engine: {str(e)}[/red]")
-else:
-    console.print("[yellow]⚠️  Engine does not appear to be running[/yellow]")
-```
-
-# Helper functions
-
-async def create_status_panel(engine):
-“”“Create live status panel”””
 try:
-status = await engine.get_engine_status()
-
-```
-    # Create layout
-    layout = Layout()
-    layout.split_column(
-        Layout(name="header", size=3),
-        Layout(name="body"),
-        Layout(name="footer", size=3)
-    )
+    config_manager = ConfigManager(config_path)
+    summary = config_manager.get_config_summary()
     
-    # Header
-    layout["header"].update(Panel(
-        f"[bold cyan]SmartArb Engine Status[/bold cyan] - {time.strftime('%H:%M:%S')}",
-        box=box.ROUNDED
-    ))
+    if output == 'json':
+        console.print(json.dumps(summary, indent=2))
+        return
     
-    # Body - split into columns
-    layout["body"].split_row(
-        Layout(name="left"),
-        Layout(name="right")
-    )
+    # Table format
+    info_table = Table(title="System Information", box=box.ROUNDED)
+    info_table.add_column("Property", style="cyan")
+    info_table.add_column("Value", style="white")
     
-    # Left column - Engine info
-    engine_info = Table(show_header=False, box=box.SIMPLE)
-    engine_info.add_column("Property", style="cyan")
-    engine_info.add_column("Value")
+    info_table.add_row("Config Path", str(summary['config_path']))
+    info_table.add_row("Config Loaded", "✅ Yes" if summary['config_loaded'] else "❌ No")
+    info_table.add_row("Enabled Exchanges", ", ".join(summary['enabled_exchanges']) or "None")
+    info_table.add_row("Enabled Strategies", ", ".join(summary['enabled_strategies']) or "None")
+    info_table.add_row("AI Enabled", "✅ Yes" if summary['ai_enabled'] else "⚪ No")
+    info_table.add_row("Debug Mode", "✅ Yes" if summary['debug_mode'] else "⚪ No")
+    info_table.add_row("Environment", summary['environment'])
+    info_table.add_row("Last Loaded", summary['last_loaded'])
     
-    engine_info.add_row("Status", f"[green]{status['status']}[/green]")
-    engine_info.add_row("Uptime", f"{status.get('uptime', 0):.1f}s")
-    engine_info.add_row("Total Trades", str(status.get('trades', {}).get('total', 0)))
-    engine_info.add_row("Success Rate", f"{status.get('trades', {}).get('success_rate', 0):.1f}%")
-    
-    layout["left"].update(Panel(engine_info, title="Engine"))
-    
-    # Right column - Exchanges
-    exchanges_info = Table(show_header=True, box=box.SIMPLE)
-    exchanges_info.add_column("Exchange", style="cyan")
-    exchanges_info.add_column("Status")
-    exchanges_info.add_column("Last Ping")
-    
-    for ex_name, ex_data in status.get('exchanges', {}).items():
-        status_icon = "🟢" if ex_data.get('connected', False) else "🔴"
-        ping = f"{ex_data.get('ping_ms', 0):.0f}ms"
-        exchanges_info.add_row(ex_name.title(), status_icon, ping)
-    
-    layout["right"].update(Panel(exchanges_info, title="Exchanges"))
-    
-    # Footer
-    layout["footer"].update(Panel(
-        "[dim]Press Ctrl+C to stop the engine[/dim]",
-        box=box.ROUNDED
-    ))
-    
-    return layout
+    console.print(info_table)
     
 except Exception as e:
-    return Panel(f"[red]Error creating status panel: {str(e)}[/red]")
+    console.print(f"[red]❌ Failed to get system info: {str(e)}[/red]")
 ```
 
-def create_status_display(status: Dict[str, Any]) -> Panel:
-“”“Create status display panel”””
-
-```
-table = Table(show_header=False, box=box.SIMPLE)
-table.add_column("Property", style="cyan", width=20)
-table.add_column("Value", width=40)
-
-# Engine status
-status_color = "green" if status['status'] == 'RUNNING' else "yellow"
-table.add_row("Engine Status", f"[{status_color}]{status['status']}[/{status_color}]")
-
-# Exchanges
-connected_exchanges = len([ex for ex in status.get('exchanges', {}).values() 
-                          if ex.get('connected', False)])
-total_exchanges = len(status.get('exchanges', {}))
-table.add_row("Exchanges", f"{connected_exchanges}/{total_exchanges} connected")
-
-# Strategies
-active_strategies = len(status.get('strategies', {}))
-table.add_row("Active Strategies", str(active_strategies))
-
-# Portfolio
-portfolio_value = status.get('portfolio', {}).get('total_value', 0)
-table.add_row("Portfolio Value", f"${portfolio_value:.2f}")
-
-# Trades
-total_trades = status.get('trades', {}).get('total', 0)
-success_rate = status.get('trades', {}).get('success_rate', 0)
-table.add_row("Total Trades", f"{total_trades} ({success_rate:.1f}% success)")
-
-return Panel(table, title="[bold cyan]SmartArb Engine Status[/bold cyan]", 
-            box=box.ROUNDED)
-```
-
-async def show_config_status(config_manager: ConfigManager):
-“”“Show configuration status”””
-
-```
-summary = config_manager.get_config_summary()
-
-# Configuration overview
-config_table = Table(title="Configuration Summary", box=box.ROUNDED)
-config_table.add_column("Property", style="cyan")
-config_table.add_column("Value")
-config_table.add_column("Status")
-
-config_table.add_row(
-    "Config File", 
-    str(summary['config_file']), 
-    "✅ Found" if summary['config_exists'] else "❌ Missing"
-)
-
-config_table.add_row(
-    "Exchanges Configured", 
-    str(summary['exchanges_configured']),
-    f"✅ {summary['exchanges_enabled']} enabled" if summary['exchanges_enabled'] >= 2 else "⚠️  Need 2+ exchanges"
-)
-
-config_table.add_row(
-    "Strategies", 
-    str(summary['strategies_configured']),
-    f"✅ {summary['strategies_enabled']} enabled" if summary['strategies_enabled'] > 0 else "⚠️  No strategies enabled"
-)
-
-config_table.add_row(
-    "Trading Mode", 
-    "Paper Trading" if summary['paper_trading'] else "Live Trading",
-    "🧪 Safe" if summary['paper_trading'] else "⚠️  Real money"
-)
-
-config_table.add_row(
-    "AI Analysis", 
-    "Enabled" if summary['ai_enabled'] else "Disabled",
-    "🧠 Active" if summary['ai_enabled'] else "➖ Inactive"
-)
-
-console.print(config_table)
-
-# Exchange credentials status
-if summary['credentials_status']:
-    cred_table = Table(title="Exchange Credentials", box=box.ROUNDED)
-    cred_table.add_column("Exchange", style="cyan")
-    cred_table.add_column("API Credentials")
-    
-    for exchange, has_creds in summary['credentials_status'].items():
-        status = "✅ Configured" if has_creds else "❌ Missing"
-        cred_table.add_row(exchange.title(), status)
-    
-    console.print(cred_table)
-```
-
-async def test_all_exchanges(engine, progress):
-“”“Test all exchange connections”””
-
-```
-for exchange_name, exchange in engine.exchanges.items():
-    await test_single_exchange_connection(exchange_name, exchange, progress)
-```
-
-async def test_single_exchange(engine, exchange_name, progress):
-“”“Test single exchange connection”””
-
-```
-if exchange_name not in engine.exchanges:
-    console.print(f"[red]❌ Exchange '{exchange_name}' not found[/red]")
-    return
-
-exchange = engine.exchanges[exchange_name]
-await test_single_exchange_connection(exchange_name, exchange, progress)
-```
-
-async def test_single_exchange_connection(exchange_name, exchange, progress):
-“”“Test individual exchange connection”””
-
-```
-test_task = progress.add_task(f"Testing {exchange_name}...", total=None)
-
+@cli.command()
+def version():
+“”“Show version information”””
 try:
-    # Test connection
-    if await exchange.connect():
-        progress.update(test_task, description=f"✅ {exchange_name} connected")
-        
-        # Test API functionality
-        ticker = await exchange.get_ticker("BTC/USDT")
-        if ticker:
-            progress.update(test_task, description=f"✅ {exchange_name} API working")
-        else:
-            progress.update(test_task, description=f"⚠️  {exchange_name} API limited")
-    else:
-        progress.update(test_task, description=f"❌ {exchange_name} connection failed")
-        
+# Import version info
+from src import **version**, PROJECT_NAME, get_package_info
+
+```
+    info = get_package_info()
+    
+    version_table = Table(title="Version Information", box=box.ROUNDED)
+    version_table.add_column("Property", style="cyan")
+    version_table.add_column("Value", style="white")
+    
+    version_table.add_row("Project", info['name'])
+    version_table.add_row("Version", info['version'])
+    version_table.add_row("Author", info['author'])
+    version_table.add_row("License", info['license'])
+    version_table.add_row("Python Required", info['python_requires'])
+    
+    console.print(version_table)
+    
+    # Show supported exchanges
+    console.print("\n[blue]📊 Supported Exchanges:[/blue]")
+    exchanges_info = info['supported_exchanges']
+    
+    exchanges_table = Table(box=box.SIMPLE)
+    exchanges_table.add_column("Exchange", style="cyan")
+    exchanges_table.add_column("Spot", style="green")
+    exchanges_table.add_column("Futures", style="yellow")
+    exchanges_table.add_column("WebSocket", style="blue")
+    
+    for exchange_name, exchange_info in exchanges_info.items():
+        exchanges_table.add_row(
+            exchange_info['name'],
+            "✅" if exchange_info['spot'] else "❌",
+            "✅" if exchange_info['futures'] else "❌", 
+            "✅" if exchange_info['websocket'] else "❌"
+        )
+    
+    console.print(exchanges_table)
+    
 except Exception as e:
-    progress.update(test_task, description=f"❌ {exchange_name} error: {str(e)[:50]}")
+    console.print(f"[red]❌ Failed to get version info: {str(e)}[/red]")
 ```
 
-def show_portfolio_table(balances):
-“”“Show portfolio in table format”””
+# Async wrapper for click commands
 
-```
-if not balances:
-    console.print("[yellow]No portfolio balances found[/yellow]")
-    return
+def async_command(f):
+“”“Decorator to make click commands async”””
+def wrapper(*args, **kwargs):
+return asyncio.run(f(*args, **kwargs))
+return wrapper
 
-# Main portfolio table
-portfolio_table = Table(title="Portfolio Balances", box=box.ROUNDED)
-portfolio_table.add_column("Asset", style="cyan")
-portfolio_table.add_column("Total Balance", justify="right")
-portfolio_table.add_column("Available", justify="right") 
-portfolio_table.add_column("Locked", justify="right")
-portfolio_table.add_column("Exchanges", justify="center")
+# Apply async wrapper to async commands
 
-for asset, balance in balances.items():
-    exchange_count = len(balance.exchange_balances)
-    portfolio_table.add_row(
-        asset,
-        f"{balance.total_balance:.8f}",
-        f"{balance.available_balance:.8f}",
-        f"{balance.locked_balance:.8f}",
-        str(exchange_count)
-    )
-
-console.print(portfolio_table)
-
-# Detailed exchange breakdown
-for asset, balance in balances.items():
-    if len(balance.exchange_balances) > 1:
-        exchange_table = Table(title=f"{asset} Exchange Breakdown", box=box.SIMPLE)
-        exchange_table.add_column("Exchange", style="cyan")
-        exchange_table.add_column("Balance", justify="right")
-        exchange_table.add_column("Available", justify="right")
-        exchange_table.add_column("Locked", justify="right")
-        
-        for ex_name, ex_balance in balance.exchange_balances.items():
-            exchange_table.add_row(
-                ex_name.title(),
-                f"{ex_balance.total:.8f}",
-                f"{ex_balance.free:.8f}",
-                f"{ex_balance.locked:.8f}"
-            )
-        
-        console.print(exchange_table)
-```
-
-def show_performance_metrics(metrics: Dict[str, Any], days: int):
-“”“Show performance metrics”””
-
-```
-perf_table = Table(title=f"Performance Metrics (Last {days} days)", box=box.ROUNDED)
-perf_table.add_column("Metric", style="cyan")
-perf_table.add_column("Value", justify="right")
-
-# Add performance data
-engine_metrics = metrics.get('engine', {})
-trades_metrics = engine_metrics.get('trades', {})
-
-perf_table.add_row("Total Trades", str(trades_metrics.get('total', 0)))
-perf_table.add_row("Successful Trades", str(trades_metrics.get('successful', 0)))
-perf_table.add_row("Success Rate", f"{trades_metrics.get('success_rate', 0):.1f}%")
-perf_table.add_row("Total Profit", f"${trades_metrics.get('total_profit', 0):.2f}")
-perf_table.add_row("Average Profit", f"${trades_metrics.get('avg_profit', 0):.2f}")
-
-console.print(perf_table)
-```
+start = async_command(start)
 
 def main():
-“”“Main entry point for CLI”””
-
-```
-# Ensure we're running the CLI in an asyncio context where needed
-def run_async_command():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        cli()
-    finally:
-        loop.close()
-
-# Check if we need to run async commands
-if len(sys.argv) > 1 and sys.argv[1] in ['start', 'status', 'test', 'portfolio', 'performance']:
-    # For async commands, we need to handle the event loop
-    import functools
-    
-    # Wrap CLI to handle async
-    original_command = cli.commands[sys.argv[1]]
-    
-    def async_wrapper(*args, **kwargs):
-        return asyncio.run(original_command(*args, **kwargs))
-    
-    cli.commands[sys.argv[1]] = click.command()(async_wrapper)
-
+“”“Main CLI entry point”””
+try:
 cli()
-```
+except KeyboardInterrupt:
+console.print(”\n[yellow]👋 Goodbye![/yellow]”)
+except Exception as e:
+console.print(f”[red]❌ CLI error: {str(e)}[/red]”)
+sys.exit(1)
 
-if **name** == ‘**main**’:
+if **name** == “**main**”:
 main()
