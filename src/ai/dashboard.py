@@ -19,6 +19,9 @@ from ..utils.notifications import NotificationManager
 logger = structlog.get_logger(__name__)
 
 
+logger = structlog.get_logger(__name__)
+
+
 class AIDashboard:
     """
     AI Analysis Dashboard and Control Center

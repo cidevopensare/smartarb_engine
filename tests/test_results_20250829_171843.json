@@ -1,0 +1,128 @@
+{
+  "timestamp": "2025-08-29T17:18:43.666465",
+  "connectivity": {
+    "bybit": {
+      "status": "error",
+      "error": "bybit fetchStatus() is not supported yet"
+    },
+    "mexc": {
+      "status": "error",
+      "error": "object of type 'NoneType' has no len()"
+    },
+    "kraken": {
+      "status": "error",
+      "error": "kraken fetchStatus() is not supported yet"
+    }
+  },
+  "market_data": {
+    "bybit": {
+      "BTC/USDT": {
+        "ticker_success": true,
+        "orderbook_success": true,
+        "bid": 108562.0,
+        "ask": 108562.1,
+        "spread_percent": 0.0001,
+        "volume_24h": 8471.273567,
+        "latency_ms": 3288.65
+      },
+      "ETH/USDT": {
+        "ticker_success": true,
+        "orderbook_success": true,
+        "bid": 4344.08,
+        "ask": 4344.09,
+        "spread_percent": 0.0002,
+        "volume_24h": 219719.72732,
+        "latency_ms": 543.23
+      },
+      "ADA/USDT": {
+        "ticker_success": true,
+        "orderbook_success": true,
+        "bid": 0.8317,
+        "ask": 0.8318,
+        "spread_percent": 0.012,
+        "volume_24h": 45356924.88,
+        "latency_ms": 544.47
+      }
+    },
+    "mexc": {
+      "BTC/USDT": {
+        "ticker_success": true,
+        "orderbook_success": true,
+        "bid": 108616.77,
+        "ask": 108616.79,
+        "spread_percent": 0.0,
+        "volume_24h": 7956.31337581,
+        "latency_ms": 10156.67
+      },
+      "ETH/USDT": {
+        "ticker_success": true,
+        "orderbook_success": true,
+        "bid": 4345.44,
+        "ask": 4345.45,
+        "spread_percent": 0.0002,
+        "volume_24h": 177944.40153,
+        "latency_ms": 400.03
+      },
+      "ADA/USDT": {
+        "ticker_success": true,
+        "orderbook_success": true,
+        "bid": 0.8322,
+        "ask": 0.8323,
+        "spread_percent": 0.012,
+        "volume_24h": 54445108.9,
+        "latency_ms": 652.14
+      }
+    },
+    "kraken": {
+      "BTC/USDT": {
+        "ticker_success": true,
+        "orderbook_success": true,
+        "bid": 108543.3,
+        "ask": 108543.4,
+        "spread_percent": 0.0001,
+        "volume_24h": 169.4237429,
+        "latency_ms": 9681.42
+      },
+      "ETH/USDT": {
+        "ticker_success": true,
+        "orderbook_success": true,
+        "bid": 4345.13,
+        "ask": 4345.14,
+        "spread_percent": 0.0002,
+        "volume_24h": 2853.52473716,
+        "latency_ms": 6179.33
+      },
+      "ADA/USDT": {
+        "ticker_success": true,
+        "orderbook_success": true,
+        "bid": 0.83237,
+        "ask": 0.832581,
+        "spread_percent": 0.0253,
+        "volume_24h": 927768.95847385,
+        "latency_ms": 6160.9
+      }
+    }
+  },
+  "accounts": {
+    "bybit": {
+      "status": "error",
+      "error": "bybit fetchTradingFees() is not supported for spot market"
+    },
+    "mexc": {
+      "status": "connected",
+      "usdt_balance": 200.0,
+      "btc_balance": 0,
+      "eth_balance": 0,
+      "maker_fee": "N/A",
+      "taker_fee": "N/A",
+      "can_trade": true,
+      "sandbox_mode": false
+    },
+    "kraken": {
+      "status": "error",
+      "error": "kraken fetchTradingFees() is not supported yet"
+    }
+  },
+  "opportunities": [],
+  "performance": {}
+}

@@ -18,6 +18,9 @@ from .models import Base, create_tables
 logger = structlog.get_logger(__name__)
 
 
+logger = structlog.get_logger(__name__)
+
+
 class DatabaseManager:
     """
     Database connection and session management

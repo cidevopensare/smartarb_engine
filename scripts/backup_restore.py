@@ -19,6 +19,9 @@ import subprocess
 import logging
 import asyncio
 
+logger = structlog.get_logger(__name__)
+
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,

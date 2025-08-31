@@ -24,6 +24,9 @@ import base64
 import datetime
 import getpass
 
+logger = structlog.get_logger(__name__)
+
+
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)

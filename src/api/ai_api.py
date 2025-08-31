@@ -16,6 +16,10 @@ from pydantic import BaseModel, Field
 import uvicorn
 import structlog
 
+logger = structlog.get_logger(__name__)
+from src.utils.config import ConfigManager
+
+
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))

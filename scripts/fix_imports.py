@@ -15,6 +15,9 @@ import argparse
 import logging
 from dataclasses import dataclass
 
+logger = structlog.get_logger(__name__)
+
+
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)

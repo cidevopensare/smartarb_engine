@@ -9,6 +9,7 @@ import asyncio
 import aiohttp
 import asyncpg
 import redis.asyncio as redis
+import structlog
 import psutil
 import json
 import time
@@ -21,6 +22,9 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 import logging
 from enum import Enum
+
+logger = structlog.get_logger(__name__)
+
 
 # Setup logging
 logging.basicConfig(
