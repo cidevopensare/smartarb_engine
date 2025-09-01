@@ -364,3 +364,4 @@ profiles/
 # Documentation assets
 !docs/images/
 !docs/assets/
+.env.docker
