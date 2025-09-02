@@ -1,98 +1,38 @@
-# SmartArb Engine - Raspberry Pi Compatible Dependencies
-# Flexible versions to avoid conflicts
+# SmartArb Engine Dependencies
 
-# Core Framework & Async
-asyncio-mqtt>=0.16.0
+# Configuration and Data Handling
+PyYAML>=6.0
+python-dotenv>=1.0.0
+
+# Async and HTTP
 aiohttp>=3.8.0
-aiofiles>=23.0.0
-websockets>=11.0.0
-uvloop>=0.17.0; platform_machine != "armv7l"
+asyncio-mqtt>=0.13.0
 
-# Exchange APIs & Trading  
-ccxt>=4.1.0
-websocket-client>=1.6.0
-
-# Database & Caching
-asyncpg>=0.28.0
-psycopg2-binary>=2.9.0
-redis>=4.5.0
-hiredis>=2.2.0
-alembic>=1.12.0
-SQLAlchemy>=2.0.0
-
-# AI Integration
-anthropic>=0.20.0
-openai>=1.10.0
-tiktoken>=0.5.0
-
-# Data Processing & Analysis
+# Data Processing  
 pandas>=2.0.0
 numpy>=1.24.0
-scipy>=1.10.0
-pytz>=2023.3
-python-dateutil>=2.8.0
-arrow>=1.2.0
 
-# Web Framework & API
-fastapi>=0.100.0
-uvicorn[standard]>=0.23.0
-starlette>=0.27.0
-pydantic>=2.5.0
-jinja2>=3.1.0
+# Exchange APIs (per future implementazioni)
+ccxt>=4.0.0
 
-# Security & Authentication
-cryptography>=41.0.0
-python-jose[cryptography]>=3.3.0
-passlib[bcrypt]>=1.7.0
-python-multipart>=0.0.6
-
-# Configuration & Environment
-pyyaml>=6.0.0
-python-dotenv>=1.0.0
-environs>=10.0.0
-
-# Monitoring & Logging
+# Logging and Monitoring
 structlog>=23.0.0
-loguru>=0.7.0
-prometheus-client>=0.17.0
-psutil>=5.9.0
 
-# HTTP Client & Requests
-httpx>=0.25.0
-requests>=2.31.0
-urllib3>=2.0.0
+# Database (per future implementazioni)
+asyncpg>=0.28.0
+redis>=4.5.0
 
-# Financial & Mathematical
-# TA-Lib # Skip for now - requires system dependencies
+# Web Framework (per dashboard futuro)
+fastapi>=0.100.0
+uvicorn>=0.22.0
 
-# Telegram & Notifications
-python-telegram-bot>=20.0.0
-notify-py>=0.3.0
-
-# Scheduling & Timing
-schedule>=1.2.0
-croniter>=1.4.0
-APScheduler>=3.10.0
-
-# Raspberry Pi Specific (conditional)
-RPi.GPIO>=0.7.0; platform_machine == "armv7l" or platform_machine == "aarch64"
-gpiozero>=1.6.0; platform_machine == "armv7l" or platform_machine == "aarch64"
-
-# Development & Testing
+# Testing
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
-pytest-mock>=3.11.0
-pytest-cov>=4.1.0
 
-# Code Quality & Linting
+# Security
+cryptography>=41.0.0
+
+# Development tools
 black>=23.0.0
 flake8>=6.0.0
-mypy>=1.5.0
-isort>=5.12.0
-
-# Utilities
-click>=8.1.0
-rich>=13.5.0
-tabulate>=0.9.0
-tqdm>=4.66.0
-colorama>=0.4.0

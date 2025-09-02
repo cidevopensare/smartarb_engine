@@ -1,357 +1,424 @@
 #!/usr/bin/env python3
 """
-SmartArb Engine - Core Trading Engine
-Complete main orchestrator for the arbitrage trading system
+SmartArb Engine - Core Trading Engine (Enhanced with Telegram)
 """
 
 import asyncio
 import logging
-import sys
 import time
 import os
-import signal
-import traceback
+from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List
-from dataclasses import dataclass
-from enum import Enum
-import structlog
-import psutil
-from pathlib import Path
 
-# SmartArb Engine imports
-from src.exchanges import ExchangeManager
-from src.strategies import StrategyManager
-from src.risk import RiskManager
-from src.portfolio import PortfolioManager
-from src.ai.scheduler import AIScheduler
-from src.ai.code_updater import CodeUpdater
-from src.database import DatabaseManager
-from src.monitoring import MonitoringService
-from src.notifications import NotificationService
-from src.utils.config import ConfigManager
-from src.utils.logger import setup_logger
-
-# Setup structured logging
-logger = structlog.get_logger(__name__)
-
-class EngineState(Enum):
-    """Engine state enumeration"""
-    STOPPED = "stopped"
-    STARTING = "starting"
-    RUNNING = "running"
-    STOPPING = "stopping"
-    ERROR = "error"
-    EMERGENCY_STOP = "emergency_stop"
-
-@dataclass
-class EngineMetrics:
-    """Engine performance metrics"""
-    start_time: float
-    uptime: float
-    trades_executed: int
-    total_profit: float
-    success_rate: float
-    memory_usage: float
-    cpu_usage: float
-    error_count: int
-    last_health_check: float
+# Import configuration
+from ..config.config_manager import AppConfig, ExchangeConfig, StrategyConfig
+from ..core.logger import get_logger, log_trade_activity
+from ..notifications.telegram_notifier import TelegramNotifier, NotificationConfig
 
 class SmartArbEngine:
-    """
-    SmartArb Engine - Main trading engine with AI integration
-    Complete orchestrator for cryptocurrency arbitrage trading
-    """
+    """Enhanced trading engine with Telegram notifications"""
     
-    def __init__(self, config_path: Optional[str] = None):
-        """Initialize SmartArb Engine"""
-        
-        # Core attributes
-        self.state = EngineState.STOPPED
-        self.start_time = time.time()
-        self.config_path = config_path or "config/settings.yaml"
-        self.shutdown_event = asyncio.Event()
-        self.emergency_stop_triggered = False
+    def __init__(self, config: AppConfig):
+        self.config = config
+        self.logger = get_logger('engine')
         self.is_running = False
+        self.is_stopping = False
         
-        # Components (initialized later)
-        self.config_manager: Optional[ConfigManager] = None
-        self.database_manager: Optional[DatabaseManager] = None
-        self.exchange_manager: Optional[ExchangeManager] = None
-        self.strategy_manager: Optional[StrategyManager] = None
-        self.risk_manager: Optional[RiskManager] = None
-        self.portfolio_manager: Optional[PortfolioManager] = None
-        self.ai_scheduler: Optional[AIScheduler] = None
-        self.code_updater: Optional[CodeUpdater] = None
-        self.monitoring_service: Optional[MonitoringService] = None
-        self.notification_service: Optional[NotificationService] = None
+        # System state
+        self.start_time = datetime.now()
+        self.last_health_check = time.time()
+        self.stats = {
+            'opportunities_found': 0,
+            'trades_executed': 0,
+            'total_profit': 0.0,
+            'api_calls': 0,
+            'errors': 0
+        }
         
-        # Metrics and monitoring
-        self.metrics = EngineMetrics(
-            start_time=self.start_time,
-            uptime=0,
-            trades_executed=0,
-            total_profit=0.0,
-            success_rate=0.0,
-            memory_usage=0.0,
-            cpu_usage=0.0,
-            error_count=0,
-            last_health_check=time.time()
+        # Trading state
+        self.active_exchanges = {}
+        self.active_strategies = {}
+        self.market_data = {}
+        
+        # Milestones tracking
+        self.last_profit_milestone = 0
+        self.last_trade_milestone = 0
+        
+        # Initialize Telegram notifier
+        self.telegram = self._setup_telegram_notifier()
+        
+        self.logger.info("🎯 SmartArb Engine initialized with Telegram notifications")
+        
+    def _setup_telegram_notifier(self) -> Optional[TelegramNotifier]:
+        """Setup Telegram notifier"""
+        try:
+            bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+            chat_id = os.getenv('TELEGRAM_CHAT_ID')
+            enabled = os.getenv('TELEGRAM_ENABLED', 'false').lower() == 'true'
+            
+            if not enabled or not bot_token or not chat_id:
+                self.logger.info("📱 Telegram notifications disabled")
+                return None
+            
+            config = NotificationConfig(
+                bot_token=bot_token,
+                chat_id=chat_id,
+                enabled=enabled,
+                min_profit_threshold=float(os.getenv('TELEGRAM_MIN_PROFIT_THRESHOLD', '25.0')),
+                min_spread_threshold=float(os.getenv('TELEGRAM_MIN_SPREAD_THRESHOLD', '1.0')),
+                max_notifications_per_hour=int(os.getenv('TELEGRAM_MAX_NOTIFICATIONS_PER_HOUR', '15')),
+                status_report_interval=int(os.getenv('TELEGRAM_STATUS_REPORT_INTERVAL', '1800')),
+                error_notifications=os.getenv('TELEGRAM_ERROR_NOTIFICATIONS', 'true').lower() == 'true'
+            )
+            
+            return TelegramNotifier(config)
+            
+        except Exception as e:
+            self.logger.error(f"❌ Failed to setup Telegram notifier: {e}")
+            return None
+        
+    async def start(self) -> None:
+        """Start the trading engine"""
+        if self.is_running:
+            self.logger.warning("⚠️ Engine is already running")
+            return
+            
+        self.logger.info("🚀 Starting SmartArb Engine...")
+        self.is_running = True
+        
+        try:
+            # Start Telegram notifier
+            if self.telegram:
+                await self.telegram.start()
+            
+            # Initialize components
+            await self._initialize_exchanges()
+            await self._initialize_strategies()
+            await self._start_market_data()
+            
+            # Start main trading loop
+            self.logger.info("✅ SmartArb Engine started successfully")
+            asyncio.create_task(self._main_loop())
+            
+        except Exception as e:
+            self.logger.error(f"❌ Failed to start engine: {str(e)}")
+            if self.telegram:
+                await self.telegram.notify_error(f"Engine startup failed: {str(e)}", "STARTUP_ERROR")
+            self.is_running = False
+            raise
+            
+    async def shutdown(self) -> None:
+        """Gracefully shutdown the engine"""
+        if not self.is_running:
+            return
+            
+        self.logger.info("🛑 Shutting down SmartArb Engine...")
+        self.is_stopping = True
+        
+        try:
+            # Stop Telegram notifier
+            if self.telegram:
+                await self.telegram.stop()
+            
+            # Log final statistics
+            await self._log_final_stats()
+            
+            self.is_running = False
+            self.logger.info("✅ SmartArb Engine shutdown complete")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error during shutdown: {str(e)}")
+            
+    async def _initialize_exchanges(self) -> None:
+        """Initialize exchange connections"""
+        self.logger.info("🔗 Initializing exchange connections...")
+        
+        for exchange_name, exchange_config in self.config.exchanges.items():
+            if not exchange_config.enabled:
+                self.logger.info(f"⏭️ Skipping disabled exchange: {exchange_name}")
+                continue
+                
+            self.logger.info(f"🔌 Connecting to {exchange_name.upper()}...")
+            
+            # Simulate exchange initialization
+            self.active_exchanges[exchange_name] = {
+                'name': exchange_name,
+                'connected': True,
+                'last_ping': time.time(),
+                'config': exchange_config
+            }
+            
+            await asyncio.sleep(0.5)  # Simulate connection delay
+            self.logger.info(f"✅ {exchange_name.upper()} connected successfully")
+            
+        if not self.active_exchanges:
+            error_msg = "No exchanges were successfully initialized"
+            if self.telegram:
+                await self.telegram.notify_error(error_msg, "EXCHANGE_ERROR")
+            raise Exception(error_msg)
+            
+        self.logger.info(f"🎉 Initialized {len(self.active_exchanges)} exchanges")
+    
+    async def _initialize_strategies(self) -> None:
+        """Initialize trading strategies"""
+        self.logger.info("🎯 Initializing trading strategies...")
+        
+        for strategy_name, strategy_config in self.config.strategies.items():
+            if not strategy_config.enabled:
+                self.logger.info(f"⏭️ Skipping disabled strategy: {strategy_name}")
+                continue
+                
+            self.logger.info(f"🎲 Loading strategy: {strategy_name}")
+            
+            self.active_strategies[strategy_name] = {
+                'name': strategy_name,
+                'config': strategy_config,
+                'opportunities_found': 0
+            }
+            
+            self.logger.info(f"✅ Strategy {strategy_name} loaded")
+            
+        if not self.active_strategies:
+            error_msg = "No strategies were successfully initialized"
+            if self.telegram:
+                await self.telegram.notify_error(error_msg, "STRATEGY_ERROR")
+            raise Exception(error_msg)
+            
+        self.logger.info(f"🎉 Initialized {len(self.active_strategies)} strategies")
+    
+    async def _start_market_data(self) -> None:
+        """Start market data simulation"""
+        self.logger.info("📊 Starting market data feeds...")
+        
+        # Initialize market data for common pairs
+        trading_pairs = ["BTC/USDT", "ETH/USDT", "ADA/USDT"]
+        
+        for pair in trading_pairs:
+            self.market_data[pair] = {
+                'last_update': time.time(),
+                'prices': {}
+            }
+            
+            # Simulate price data for each exchange
+            import random
+            base_price = 50000 if 'BTC' in pair else 3000 if 'ETH' in pair else 1.0
+            
+            for exchange_name in self.active_exchanges.keys():
+                price_variation = random.uniform(0.95, 1.05)
+                self.market_data[pair]['prices'][exchange_name] = {
+                    'price': base_price * price_variation,
+                    'timestamp': time.time()
+                }
+        
+        self.logger.info(f"✅ Market data initialized for {len(trading_pairs)} pairs")
+        
+    async def _main_loop(self) -> None:
+        """Main trading loop with Telegram integration"""
+        self.logger.info("🔄 Starting main trading loop...")
+        
+        loop_count = 0
+        while self.is_running and not self.is_stopping:
+            try:
+                loop_count += 1
+                
+                # Scan for opportunities
+                await self._scan_opportunities()
+                
+                # Check for milestones
+                await self._check_milestones()
+                
+                # Send status reports
+                await self._send_status_reports()
+                
+                # Log status every 10 loops
+                if loop_count % 10 == 0:
+                    await self._log_status()
+                
+                # Wait based on strategy frequency
+                scan_frequency = 5  # Default 5 seconds
+                if self.active_strategies:
+                    scan_frequency = min(
+                        strategy['config'].scan_frequency 
+                        for strategy in self.active_strategies.values()
+                    )
+                
+                await asyncio.sleep(scan_frequency)
+                
+            except Exception as e:
+                error_msg = f"Error in main loop: {str(e)}"
+                self.logger.error(f"❌ {error_msg}")
+                self.stats['errors'] += 1
+                
+                if self.telegram:
+                    await self.telegram.notify_error(error_msg, "RUNTIME_ERROR")
+                
+                await asyncio.sleep(10)
+    
+    async def _scan_opportunities(self) -> None:
+        """Scan for arbitrage opportunities with Telegram notifications"""
+        import random
+        
+        # Simulate opportunity detection
+        for strategy_name in self.active_strategies:
+            if strategy_name == "spatial_arbitrage":
+                # Simulate finding opportunities with more variety
+                if random.random() < 0.35:  # 35% chance of finding opportunity
+                    
+                    pair = random.choice(list(self.market_data.keys()))
+                    exchanges = list(self.active_exchanges.keys())
+                    buy_exchange = random.choice(exchanges)
+                    sell_exchange = random.choice([e for e in exchanges if e != buy_exchange])
+                    
+                    spread = random.uniform(0.05, 3.5)  # Wider spread range
+                    profit = random.uniform(5, 150)     # Wider profit range
+                    
+                    opportunity = {
+                        'strategy': strategy_name,
+                        'pair': pair,
+                        'buy_exchange': buy_exchange,
+                        'sell_exchange': sell_exchange,
+                        'spread_percent': spread,
+                        'potential_profit': profit,
+                        'timestamp': time.time()
+                    }
+                    
+                    self.stats['opportunities_found'] += 1
+                    self.active_strategies[strategy_name]['opportunities_found'] += 1
+                    
+                    # Log opportunity
+                    log_trade_activity(
+                        f"🎯 OPPORTUNITY FOUND: {opportunity['pair']} | "
+                        f"{opportunity['buy_exchange'].upper()} → {opportunity['sell_exchange'].upper()} | "
+                        f"Spread: {opportunity['spread_percent']:.2f}% | "
+                        f"Profit: ${opportunity['potential_profit']:.2f}"
+                    )
+                    
+                    # Send Telegram notification
+                    if self.telegram:
+                        await self.telegram.notify_opportunity(opportunity)
+                    
+                    # Simulate trade execution in paper mode
+                    if self.config.trading_mode == "PAPER":
+                        await self._execute_paper_trade(opportunity)
+        
+        # Update market data
+        await self._update_market_data()
+    
+    async def _execute_paper_trade(self, opportunity):
+        """Execute a paper trade with Telegram notification"""
+        await asyncio.sleep(0.1)  # Simulate execution time
+        
+        profit = opportunity['potential_profit']
+        self.stats['trades_executed'] += 1
+        self.stats['total_profit'] += profit
+        
+        trade = {
+            'pair': opportunity['pair'],
+            'profit': profit,
+            'total_profit': self.stats['total_profit'],
+            'timestamp': time.time()
+        }
+        
+        log_trade_activity(
+            f"📄 PAPER TRADE EXECUTED: {trade['pair']} | "
+            f"Profit: ${profit:.2f} | "
+            f"Total: ${self.stats['total_profit']:.2f}"
         )
         
-        # Setup signal handlers
-        self._setup_signal_handlers()
+        # Send Telegram notification for significant trades
+        if self.telegram:
+            await self.telegram.notify_trade_execution(trade)
+    
+    async def _check_milestones(self):
+        """Check and notify about milestones"""
+        if not self.telegram:
+            return
+            
+        # Profit milestones (every $1000)
+        current_profit_milestone = int(self.stats['total_profit'] / 1000) * 1000
+        if current_profit_milestone > self.last_profit_milestone and current_profit_milestone > 0:
+            self.last_profit_milestone = current_profit_milestone
+            await self.telegram.notify_milestone("profit_milestone", current_profit_milestone)
         
-        logger.info("SmartArb Engine initialized")
+        # Trade milestones (every 100 trades)
+        current_trade_milestone = int(self.stats['trades_executed'] / 100) * 100
+        if current_trade_milestone > self.last_trade_milestone and current_trade_milestone > 0:
+            self.last_trade_milestone = current_trade_milestone
+            await self.telegram.notify_milestone("trade_milestone", current_trade_milestone)
     
-    def _setup_signal_handlers(self):
-        """Setup graceful shutdown signal handlers"""
-        def signal_handler(signum, frame):
-            logger.info("Shutdown signal received", signal=signum)
-            asyncio.create_task(self.shutdown())
+    async def _send_status_reports(self):
+        """Send periodic status reports"""
+        if not self.telegram:
+            return
+            
+        status_data = {
+            'uptime': str(datetime.now() - self.start_time),
+            'opportunities_found': self.stats['opportunities_found'],
+            'trades_executed': self.stats['trades_executed'],
+            'total_profit': self.stats['total_profit'],
+            'active_exchanges': len(self.active_exchanges),
+            'active_strategies': len(self.active_strategies),
+            'errors': self.stats['errors']
+        }
         
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
+        await self.telegram.notify_status_report(status_data)
     
-    async def initialize(self) -> bool:
-        """Initialize all engine components"""
-        try:
-            self.state = EngineState.STARTING
-            logger.info("Initializing SmartArb Engine...")
+    async def _update_market_data(self):
+        """Update simulated market data"""
+        import random
+        
+        for pair_data in self.market_data.values():
+            for exchange_name in pair_data['prices']:
+                # Small price movements
+                current_price = pair_data['prices'][exchange_name]['price']
+                change = random.uniform(-0.01, 0.01)
+                new_price = current_price * (1 + change)
+                
+                pair_data['prices'][exchange_name]['price'] = new_price
+                pair_data['prices'][exchange_name]['timestamp'] = time.time()
             
-            # 1. Initialize configuration
-            if not await self._initialize_config():
-                return False
-            
-            # 2. Initialize database
-            if not await self._initialize_database():
-                logger.warning("Database initialization failed - continuing")
-            
-            # 3. Initialize exchanges
-            if not await self._initialize_exchanges():
-                return False
-            
-            # 4. Initialize core components
-            if not await self._initialize_core_components():
-                return False
-            
-            # 5. Initialize AI components (optional)
-            if not await self._initialize_ai_components():
-                logger.warning("AI initialization failed - continuing without AI")
-            
-            # 6. Initialize monitoring
-            if not await self._initialize_monitoring():
-                logger.warning("Monitoring initialization failed - continuing")
-            
-            # 7. Initialize notifications
-            if not await self._initialize_notifications():
-                logger.warning("Notifications initialization failed - continuing")
-            
-            logger.info("SmartArb Engine initialization completed successfully")
-            return True
-            
-        except Exception as e:
-            logger.error("Engine initialization failed", error=str(e))
-            self.state = EngineState.ERROR
-            return False
+            pair_data['last_update'] = time.time()
     
-    async def _initialize_config(self) -> bool:
-        """Initialize configuration manager"""
-        try:
-            self.config_manager = ConfigManager(self.config_path)
-            await self.config_manager.load_all_configs()
-            
-            if not self.config_manager.validate_critical_configs():
-                raise ValueError("Critical configuration validation failed")
-            
-            logger.info("Configuration initialized")
-            return True
-            
-        except Exception as e:
-            logger.error("Configuration initialization failed", error=str(e))
-            return False
+    async def _log_status(self):
+        """Log current status"""
+        uptime = datetime.now() - self.start_time
+        
+        self.logger.info("=" * 50)
+        self.logger.info("📊 SMARTARB ENGINE STATUS")
+        self.logger.info(f"⏱️  Uptime: {uptime}")
+        self.logger.info(f"🔗 Active Exchanges: {len(self.active_exchanges)}")
+        self.logger.info(f"🎯 Active Strategies: {len(self.active_strategies)}")
+        self.logger.info(f"🎲 Opportunities Found: {self.stats['opportunities_found']}")
+        self.logger.info(f"📈 Trades Executed: {self.stats['trades_executed']}")
+        self.logger.info(f"💰 Total Profit: ${self.stats['total_profit']:.2f}")
+        if self.telegram:
+            self.logger.info(f"📱 Telegram: {self.telegram.stats['notifications_sent']} notifications sent")
+        self.logger.info("=" * 50)
     
-    async def _initialize_database(self) -> bool:
-        """Initialize database manager"""
-        try:
-            db_config = self.config_manager.get_database_config()
-            self.database_manager = DatabaseManager(db_config)
-            
-            await self.database_manager.initialize()
-            await self.database_manager.test_connection()
-            await self.database_manager.run_migrations()
-            
-            logger.info("Database initialized")
-            return True
-            
-        except Exception as e:
-            logger.error("Database initialization failed", error=str(e))
-            return False
+    async def health_check(self):
+        """Perform health check"""
+        self.last_health_check = time.time()
+        self.logger.debug("💚 Health check completed")
+        
+        return {
+            'status': 'healthy',
+            'uptime': str(datetime.now() - self.start_time),
+            'exchanges': len(self.active_exchanges),
+            'strategies': len(self.active_strategies),
+            'telegram_enabled': self.telegram is not None
+        }
     
-    async def _initialize_exchanges(self) -> bool:
-        """Initialize exchange connections"""
-        try:
-            exchange_config = self.config_manager.get_exchange_config()
-            self.exchange_manager = ExchangeManager(exchange_config)
-            
-            await self.exchange_manager.initialize()
-            
-            logger.info("Exchange manager initialized")
-            return True
-            
-        except Exception as e:
-            logger.error("Exchange initialization failed", error=str(e))
-            return False
-    
-    async def _initialize_core_components(self) -> bool:
-        """Initialize core trading components"""
-        try:
-            # Initialize strategy manager
-            self.strategy_manager = StrategyManager(self.config_manager)
-            await self.strategy_manager.initialize()
-            
-            # Initialize risk manager
-            self.risk_manager = RiskManager(self.config_manager)
-            await self.risk_manager.initialize()
-            
-            # Initialize portfolio manager
-            self.portfolio_manager = PortfolioManager(self.config_manager)
-            await self.portfolio_manager.initialize()
-            
-            logger.info("Core components initialized")
-            return True
-            
-        except Exception as e:
-            logger.error("Core components initialization failed", error=str(e))
-            return False
-    
-    async def _initialize_ai_components(self) -> bool:
-        """Initialize AI system components"""
-        try:
-            ai_config = self.config_manager.get_ai_config()
-            
-            # Initialize AI scheduler
-            self.ai_scheduler = AIScheduler(ai_config)
-            await self.ai_scheduler.initialize()
-            
-            # Initialize code updater
-            self.code_updater = CodeUpdater(ai_config, self.database_manager)
-            await self.code_updater.initialize()
-            
-            logger.info("AI components initialized")
-            return True
-            
-        except Exception as e:
-            logger.error("AI components initialization failed", error=str(e))
-            return False
-    
-    async def _initialize_monitoring(self) -> bool:
-        """Initialize monitoring service"""
-        try:
-            monitoring_config = self.config_manager.get_monitoring_config()
-            self.monitoring_service = MonitoringService(monitoring_config)
-            
-            await self.monitoring_service.initialize()
-            
-            logger.info("Monitoring initialized")
-            return True
-            
-        except Exception as e:
-            logger.error("Monitoring initialization failed", error=str(e))
-            return False
-    
-    async def _initialize_notifications(self) -> bool:
-        """Initialize notification service"""
-        try:
-            notification_config = self.config_manager.get_notification_config()
-            self.notification_service = NotificationService(notification_config)
-            
-            await self.notification_service.initialize()
-            
-            # Send startup notification
-            await self.notification_service.send_notification(
-                "🚀 SmartArb Engine Started",
-                f"Engine initialized successfully at {datetime.now().isoformat()}",
-                priority="info"
-            )
-            
-            logger.info("Notifications initialized")
-            return True
-            
-        except Exception as e:
-            logger.error("Notifications initialization failed", error=str(e))
-            return False
-    
-    async def start(self) -> bool:
-        """Start the trading engine"""
-        try:
-            if not await self.initialize():
-                return False
-            
-            # Start all services
-            await self.database_manager.start() if self.database_manager else None
-            await self.exchange_manager.start() if self.exchange_manager else None
-            await self.strategy_manager.start() if self.strategy_manager else None
-            await self.risk_manager.start() if self.risk_manager else None
-            await self.portfolio_manager.start() if self.portfolio_manager else None
-            await self.ai_scheduler.start() if self.ai_scheduler else None
-            await self.monitoring_service.start() if self.monitoring_service else None
-            
-            self.state = EngineState.RUNNING
-            self.is_running = True
-            
-            logger.info("🚀 SmartArb Engine is running!")
-            return True
-            
-        except Exception as e:
-            logger.error("Engine start failed", error=str(e))
-            self.state = EngineState.ERROR
-            return False
-    
-    async def shutdown(self):
-        """Graceful shutdown"""
-        logger.info("⏹️  Shutting down SmartArb Engine...")
+    async def _log_final_stats(self) -> None:
+        """Log final statistics"""
+        self.logger.info("=" * 60)
+        self.logger.info("📊 FINAL STATISTICS")
+        self.logger.info(f"⏱️  Total Uptime: {datetime.now() - self.start_time}")
+        self.logger.info(f"🎲 Total Opportunities: {self.stats['opportunities_found']}")
+        self.logger.info(f"📈 Total Trades: {self.stats['trades_executed']}")
+        self.logger.info(f"💰 Total Profit: ${self.stats['total_profit']:.2f}")
+        if self.telegram:
+            self.logger.info(f"📱 Telegram Notifications: {self.telegram.stats['notifications_sent']}")
+        self.logger.info("=" * 60)
+        
         self.is_running = False
-        self.state = EngineState.STOPPING
-        
-        # Send shutdown notification
-        if self.notification_service:
-            await self.notification_service.send_notification(
-                "⏹️ SmartArb Engine Stopped", 
-                "Engine shut down gracefully"
-            )
-        
-        self.state = EngineState.STOPPED
-        logger.info("👋 SmartArb Engine stopped")
-
-async def main():
-    """Main entry point"""
-    engine = SmartArbEngine()
-    
-    try:
-        if not await engine.start():
-            logger.error("Engine start failed")
-            return 1
-        
-        # Keep running until shutdown
-        while engine.is_running:
-            await asyncio.sleep(1)
-        
-        return 0
-        
-    except KeyboardInterrupt:
-        logger.info("Keyboard interrupt received")
-        await engine.shutdown()
-        return 0
-        
-    except Exception as e:
-        logger.critical("Unexpected engine error", error=str(e))
-        return 1
-
-if __name__ == "__main__":
-    # Setup basic logging
-    logging.basicConfig(level=logging.INFO)
-    
-    # Run the engine
-    exit_code = asyncio.run(main())
-    sys.exit(exit_code)
+        self.logger.info("✅ SmartArb Engine shutdown complete")

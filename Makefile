@@ -585,6 +585,7 @@ release: clean quality test security-scan docker-build ## Prepare release
 # =============================================================================
 # INTERNAL TARGETS (not shown in help)
 # =============================================================================
+
 .PHONY: _check-venv
 _check-venv:
 	@if [ ! -f $(PYTHON_VENV) ]; then \
@@ -600,3 +601,127 @@ update-makefile:
 		echo "$(GREEN)Makefile updated from template$(NC)"; \
 	fi
 
+
+# =============================================================================
+# SMARTARB ENGINE + DASHBOARD MANAGEMENT
+# =============================================================================
+
+.PHONY: start
+start: ## Start SmartArb Engine and Dashboard together
+	@echo "Starting SmartArb Engine and Dashboard..."
+	@echo "Activating virtual environment and starting services..."
+	bash -c "source venv/bin/activate && \
+	python -m src.core.engine & echo \$$! > .engine.pid && \
+	sleep 3 && \
+	python src/api/dashboard_server.py & echo \$$! > .dashboard.pid && \
+	echo 'Services started:' && \
+	echo '  - Engine PID: '`cat .engine.pid` && \
+	echo '  - Dashboard PID: '`cat .dashboard.pid` && \
+	echo '  - Dashboard URL: http://localhost:8000' && \
+	echo 'Press Ctrl+C to stop both services'"
+
+.PHONY: start-dev
+start-dev: ## Start in development mode with logs
+	@echo "Starting SmartArb Engine and Dashboard in development mode..."
+	bash -c "source venv/bin/activate && \
+	(python -m src.core.engine 2>&1 | sed 's/^/[ENGINE] /' &) && \
+	sleep 3 && \
+	(python src/api/dashboard_server.py 2>&1 | sed 's/^/[DASHBOARD] /' &) && \
+	wait"
+
+.PHONY: start-separate-ports
+start-separate-ports: ## Start with engine on default, dashboard on 8001
+	@echo "Starting services on separate ports..."
+	bash -c "source venv/bin/activate && \
+	python -m src.core.engine & echo \$$! > .engine.pid && \
+	sleep 3 && \
+	sed 's/port=8000/port=8001/g' src/api/dashboard_server.py > /tmp/dashboard_8001.py && \
+	python /tmp/dashboard_8001.py & echo \$$! > .dashboard.pid && \
+	echo 'Services started:' && \
+	echo '  - Engine PID: '`cat .engine.pid` && \
+	echo '  - Dashboard PID: '`cat .dashboard.pid` && \
+	echo '  - Dashboard URL: http://localhost:8001'"
+
+.PHONY: stop
+stop: ## Stop SmartArb Engine and Dashboard
+	@echo "Stopping SmartArb Engine and Dashboard..."
+	@if [ -f .engine.pid ]; then \
+	kill `cat .engine.pid` 2>/dev/null || true; \
+	rm .engine.pid; \
+	echo "Engine stopped"; \
+	fi
+	@if [ -f .dashboard.pid ]; then \
+	kill `cat .dashboard.pid` 2>/dev/null || true; \
+	rm .dashboard.pid; \
+	echo "Dashboard stopped"; \
+	fi
+	@pkill -f "src.core.engine" 2>/dev/null || true
+	@pkill -f "dashboard_server.py" 2>/dev/null || true
+	@echo "All SmartArb processes stopped"
+
+.PHONY: status
+status: ## Check status of SmartArb services
+	@echo "SmartArb Engine Status:"
+	@if [ -f .engine.pid ]; then \
+	if ps -p `cat .engine.pid` > /dev/null; then \
+	echo "  Engine: Running (PID: `cat .engine.pid`)"; \
+	else \
+	echo "  Engine: Stopped (stale PID file)"; \
+	rm .engine.pid; \
+	fi \
+	else \
+	echo "  Engine: Stopped"; \
+	fi
+	@if [ -f .dashboard.pid ]; then \
+	if ps -p `cat .dashboard.pid` > /dev/null; then \
+	echo "  Dashboard: Running (PID: `cat .dashboard.pid`)"; \
+	else \
+	echo "  Dashboard: Stopped (stale PID file)"; \
+	rm .dashboard.pid; \
+	fi \
+	else \
+	echo "  Dashboard: Stopped"; \
+	fi
+	@echo "Active Python processes:"
+	@ps aux | grep -E "(src.core.engine|dashboard_server)" | grep -v grep || echo "  No SmartArb processes running"
+
+.PHONY: restart
+restart: stop start ## Restart SmartArb Engine and Dashboard
+
+.PHONY: logs
+logs: ## Show logs from both services
+	@echo "Showing recent logs..."
+	@echo "=== Engine Logs ==="
+	@tail -20 logs/smartarb.log 2>/dev/null || echo "No engine logs found"
+	@echo "=== Dashboard Logs ==="
+	@tail -20 logs/dashboard.log 2>/dev/null || echo "No dashboard logs found"
+	@echo "=== System Logs ==="
+	@sudo journalctl -u smartarb -n 10 --no-pager 2>/dev/null || echo "No systemd logs found"
+
+.PHONY: start-systemd
+start-systemd: ## Start using systemd services
+	@echo "Starting SmartArb via systemd..."
+	@sudo systemctl start smartarb-engine smartarb-dashboard 2>/dev/null || sudo systemctl start smartarb
+	@sudo systemctl status smartarb-engine smartarb-dashboard --no-pager 2>/dev/null || sudo systemctl status smartarb --no-pager
+
+.PHONY: stop-systemd
+stop-systemd: ## Stop systemd services
+	@echo "Stopping SmartArb systemd services..."
+	@sudo systemctl stop smartarb-engine smartarb-dashboard 2>/dev/null || sudo systemctl stop smartarb
+
+.PHONY: install-service
+install-service: ## Install systemd services
+	@echo "Installing SmartArb systemd services..."
+	@sudo cp scripts/smartarb-engine.service /etc/systemd/system/ 2>/dev/null || echo "Engine service file not found"
+	@sudo cp scripts/smartarb-dashboard.service /etc/systemd/system/ 2>/dev/null || echo "Dashboard service file not found"
+	@sudo systemctl daemon-reload
+	@sudo systemctl enable smartarb-engine smartarb-dashboard
+	@echo "Services installed and enabled"
+
+.PHONY: url
+url: ## Show dashboard URL and test connection
+	@echo "Dashboard URLs:"
+	@echo "  Local: http://localhost:8000"
+	@echo "  Network: http://`hostname -I | awk '{print $$1}'`:8000"
+	@echo "Testing connection..."
+	@curl -s http://localhost:8000/health | grep -q "healthy" && echo "  Dashboard is responding" || echo "  Dashboard not accessible"

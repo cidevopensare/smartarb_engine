@@ -100,7 +100,7 @@ priority: 1
 
 ```
 # Strategy-specific settings
-min_spread_percent: 0.20          # 0.20% minimum spread
+min_spread_percent: 0.05          # 0.20% minimum spread
 max_position_size: 1000           # USDT
 confidence_threshold: 0.7         # 0-1 confidence level
 
@@ -122,17 +122,17 @@ trading_pairs:
 # Risk settings
 max_risk_score: 0.8
 min_confidence_level: 0.7
-scan_frequency: 5                 # seconds
+scan_frequency: 3                 # seconds
 ```
 
 # Future strategies (disabled for now)
 
 triangular_arbitrage:
-enabled: false
+enabled: true
 priority: 2
 
 statistical_arbitrage:
-enabled: false
+enabled: true
 priority: 3
 
 # =============================================================================
@@ -314,13 +314,13 @@ alerts:
 ```
 
 webhook:
-enabled: false
+enabled: true
 url: “${WEBHOOK_URL:}”
 timeout: 10
 retry_attempts: 3
 
 email:
-enabled: false
+enabled: true
 smtp_host: “${SMTP_HOST:}”
 smtp_port: 587
 username: “${SMTP_USERNAME:}”
@@ -386,7 +386,7 @@ auto_throttle: true
 # GPIO for status LED (optional)
 
 gpio:
-enabled: false                    # Enable if you have LED connected
+enabled: true                    # Enable if you have LED connected
 status_led_pin: 18
 activity_led_pin: 16
 
@@ -453,4 +453,30 @@ risk_management:
 max_position_size: 100
 strategies:
 spatial_arbitrage:
-min_spread_percent: 0.10
+min_spread_percent: 0.05
+# Quick fix overrides
+strategies:
+  spatial_arbitrage:
+    enabled: true
+    min_spread_percent: 0.05  # Lowered for testing
+    scan_frequency: 3         # More frequent scanning
+    max_position_size: 50     # Smaller position for testing
+    confidence_threshold: 0.5 # Lower threshold
+
+# Enhanced logging configuration
+logging:
+  log_level: "DEBUG"
+  log_directory: "logs"
+  console_output: true
+  structured_logging: true
+  max_file_size_mb: 50
+  backup_count: 5
+  
+# Enhanced strategy settings for more activity
+strategies:
+  spatial_arbitrage:
+    enabled: true
+    scan_frequency: 2        # Scan every 2 seconds
+    min_spread_percent: 0.05 # Lower threshold = more opportunities
+    max_position_size: 50    # Smaller positions for testing
+    confidence_threshold: 0.3 # Lower threshold = more active
