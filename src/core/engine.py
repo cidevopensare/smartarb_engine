@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+# Resto del file engine originale con import assoluti
 """
 SmartArb Engine - Core Trading Engine (Enhanced with Telegram)
 """
@@ -11,9 +16,9 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 
 # Import configuration
-from ..config.config_manager import AppConfig, ExchangeConfig, StrategyConfig
-from ..core.logger import get_logger, log_trade_activity
-from ..notifications.telegram_notifier import TelegramNotifier, NotificationConfig
+from src.config.config_manager import AppConfig, ExchangeConfig, StrategyConfig
+from src.core.logger import get_logger, log_trade_activity
+from src.notifications.telegram_notifier import TelegramNotifier, NotificationConfig
 
 class SmartArbEngine:
     """Enhanced trading engine with Telegram notifications"""

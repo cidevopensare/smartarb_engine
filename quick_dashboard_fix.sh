@@ -1,3 +1,23 @@
+#!/bin/bash
+# quick_dashboard_fix.sh - Risolve il problema dashboard immediatamente
+
+echo "🔧 SmartArb Dashboard - Fix Rapido"
+echo "=================================="
+
+# 1. Installa psutil mancante
+echo "📦 Installing required packages..."
+pip3 install psutil fastapi uvicorn websockets 2>/dev/null || echo "Some packages may already be installed"
+
+# 2. Abilita esplicitamente Telegram
+echo "📱 Fixing Telegram configuration..."
+sed -i '/TELEGRAM_ENABLED/d' .env 2>/dev/null || true
+echo "TELEGRAM_ENABLED=true" >> .env
+
+# 3. Crea dashboard server se non esiste o è rotto
+echo "📊 Setting up dashboard server..."
+mkdir -p src/api
+
+cat > src/api/dashboard_server.py << 'EOF'
 #!/usr/bin/env python3
 """
 SmartArb Dashboard Server - Fixed Version
@@ -397,3 +417,29 @@ if __name__ == "__main__":
     print("🚀 Starting SmartArb Dashboard on port 8001...")
     print("📊 Dashboard will be available at: http://localhost:8001")
     uvicorn.run(app, host="0.0.0.0", port=8001, log_level="info")
+EOF
+
+chmod +x src/api/dashboard_server.py
+
+# 4. Avvia la dashboard
+echo "🚀 Starting dashboard server..."
+cd ~/smartarb_engine
+python3 src/api/dashboard_server.py > logs/dashboard.log 2>&1 &
+DASHBOARD_PID=$!
+echo $DASHBOARD_PID > .dashboard.pid
+
+# 5. Aspetta che si avvii
+sleep 5
+
+echo ""
+echo "✅ Dashboard Fix Completato!"
+echo "=========================="
+echo "🌐 Dashboard URL: http://localhost:8001"
+echo "📊 Dashboard PID: $DASHBOARD_PID"
+echo "📋 Dashboard logs: logs/dashboard.log"
+echo ""
+echo "🔍 Per verificare:"
+echo "  curl http://localhost:8001/api/metrics"
+echo "  firefox http://localhost:8001"
+echo ""
+echo "🛑 Per fermare: kill $DASHBOARD_PID"

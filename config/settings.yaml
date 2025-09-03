@@ -1,482 +1,74 @@
-# SmartArb Engine Main Configuration
+# SmartArb Engine Configuration
+# Auto-generated fixed configuration
 
-# Raspberry Pi 5 Optimized Settings
+app:
+  name: "SmartArb Engine"
+  version: "1.0.0"
+  mode: "paper"  # paper or live
+  debug: false
 
-# =============================================================================
+# Exchange Configuration
+exchanges:
+  kraken:
+    enabled: true
+    name: "Kraken"
+    testnet: false
+    
+  bybit:
+    enabled: true 
+    name: "Bybit"
+    testnet: false
+    
+  mexc:
+    enabled: true
+    name: "MEXC"
+    testnet: false
 
-# ENGINE CONFIGURATION
-
-# =============================================================================
-
-engine:
-
-# Core engine settings
-
-max_concurrent_opportunities: 3
-scan_interval: 5                    # seconds between market scans
-health_check_interval: 30           # seconds between health checks
-
-# Performance settings (Raspberry Pi optimized)
-
-max_threads: 4                      # Raspberry Pi 5 has 4 cores
-memory_limit_mb: 3072               # Leave 1GB for system (4GB total)
-
-# Startup behavior
-
-auto_start_strategies: true
-auto_connect_exchanges: true
-validate_config_on_start: true
-
-# =============================================================================
-
-# TRADING CONFIGURATION
-
-# =============================================================================
-
-trading:
-
-# Global trading settings
-
-paper_trading: true                 # START IN PAPER TRADING MODE
-default_order_type: “limit”
-order_timeout: 30                   # seconds
-
-# Position sizing
-
-max_position_size_usd: 1000
-min_position_size_usd: 10
-position_size_increment: 10
-
-# Profit targets
-
-min_profit_threshold: 0.20          # 0.20% minimum
-target_profit_margin: 0.50          # 0.50% target
-max_slippage_percent: 0.10          # 0.10% max slippage
-
-# =============================================================================
-
-# RISK MANAGEMENT
-
-# =============================================================================
-
-risk_management:
-
-# Daily limits
-
-max_daily_trades: 50
-max_daily_volume_usd: 10000
-max_daily_loss: -200                # USDT
-
-# Position limits
-
-max_position_size: 1000             # USDT per position
-max_total_exposure: 5000            # USDT total
-max_open_positions: 5
-
-# Risk controls
-
-enable_stop_loss: true
-stop_loss_percent: -2.0             # -2% stop loss
-emergency_stop_enabled: true
-
-# Circuit breakers
-
-circuit_breaker:
-enabled: true
-loss_threshold: -100              # USDT
-lookback_minutes: 60
-cooldown_minutes: 30
-
-# =============================================================================
-
-# STRATEGY CONFIGURATION
-
-# =============================================================================
-
+# Strategy Configuration
 strategies:
-spatial_arbitrage:
-enabled: true
-priority: 1
+  spatial_arbitrage:
+    enabled: true
+    name: "Spatial Arbitrage"
+    min_profit_threshold: 0.5  # %
+    max_position_size: 1000    # USDT
+    
+# Risk Management
+risk_management:
+  enabled: true
+  max_position_size: 1000      # USDT per trade
+  max_daily_loss: 200          # USDT
+  max_drawdown: 500            # USDT
+  min_profit_threshold: 0.20   # %
+  emergency_stop: true
 
-```
-# Strategy-specific settings
-min_spread_percent: 0.05          # 0.20% minimum spread
-max_position_size: 1000           # USDT
-confidence_threshold: 0.7         # 0-1 confidence level
-
-# Exchange preferences
-preferred_pairs:
-  - ["kraken", "bybit"]
-  - ["bybit", "mexc"]
-  - ["kraken", "mexc"]
-
-# Trading pairs to monitor
-trading_pairs:
-  - "BTC/USDT"
-  - "ETH/USDT"
-  - "ADA/USDT"
-  - "DOT/USDT"
-  - "LINK/USDT"
-  - "MATIC/USDT"
-
-# Risk settings
-max_risk_score: 0.8
-min_confidence_level: 0.7
-scan_frequency: 3                 # seconds
-```
-
-# Future strategies (disabled for now)
-
-triangular_arbitrage:
-enabled: true
-priority: 2
-
-statistical_arbitrage:
-enabled: true
-priority: 3
-
-# =============================================================================
-
-# DATABASE CONFIGURATION
-
-# =============================================================================
-
-database:
-postgresql:
-enabled: true
-host: “${POSTGRES_HOST:localhost}”
-port: 5432
-database: “${POSTGRES_DATABASE:smartarb}”
-username: “${POSTGRES_USERNAME:smartarb_user}”
-password: “${POSTGRES_PASSWORD}”
-
-```
-# Connection pool settings (Raspberry Pi optimized)
-min_connections: 2
-max_connections: 8
-connection_timeout: 30
-
-# Performance settings
-statement_timeout: 30000          # 30 seconds
-query_timeout: 10000              # 10 seconds
-```
-
-redis:
-enabled: true
-host: “${REDIS_HOST:localhost}”
-port: 6379
-password: “${REDIS_PASSWORD:}”
-database: 0
-
-```
-# Redis settings (Raspberry Pi optimized)
-max_connections: 10
-retry_on_timeout: true
-socket_keepalive: true
-socket_keepalive_options: {}
-```
-
-# =============================================================================
-
-# AI CONFIGURATION (CLAUDE INTEGRATION)
-
-# =============================================================================
-
-ai:
-enabled: true
-provider: “claude”                  # claude, openai (backup)
-
-# Claude specific settings
-
-claude:
-api_key: “${CLAUDE_API_KEY}”
-api_url: “${CLAUDE_API_URL:https://api.anthropic.com/v1/messages}”
-model: “claude-3-sonnet-20240229”
-max_tokens: 4096
-temperature: 0.1                  # Conservative for trading analysis
-
-# Analysis settings
-
-analysis:
-enabled: true
-frequency: “daily”                # daily, hourly, manual
-auto_apply_safe_changes: false    # Manual approval required initially
-confidence_threshold: 0.8         # AI recommendation confidence
-
-# Scheduling
-
-scheduling:
-default: “0 6 * * *”              # Daily at 6 AM
-emergency_triggers:
-low_success_rate: 60.0          # % trigger
-high_drawdown: -100.0           # USDT trigger
-high_error_rate: 20.0           # % trigger
-
-# Safety settings
-
-safety:
-enable_code_review: true
-require_human_approval: true
-create_backups: true
-max_changes_per_day: 3
-
-# Notifications
-
-notifications:
-analysis_complete: true
-recommendations_available: true
-emergency_triggers: true
-code_updates_applied: true
-
-# =============================================================================
-
-# LOGGING CONFIGURATION
-
-# =============================================================================
-
-logging:
-level: INFO                         # DEBUG, INFO, WARNING, ERROR
-format: “structured”                # json, structured, simple
-
-# File logging
-
-file_logging:
-enabled: true
-log_dir: “logs”
-max_file_size_mb: 50
-backup_count: 5
-
-# Console logging
-
-console_logging:
-enabled: true
-colored: true
-
-# Specific logger levels
-
-loggers:
-smartarb: INFO
-ccxt: WARNING
-urllib3: WARNING
-websockets: WARNING
-
-# =============================================================================
-
-# MONITORING AND ALERTING
-
-# =============================================================================
-
-monitoring:
-
-# Health checks
-
-health_checks:
-enabled: true
-interval: 60                      # seconds
-
-# Metrics collection
-
-metrics:
-enabled: true
-retention_days: 30
-
-# Performance monitoring
-
-performance:
-track_latency: true
-track_memory: true
-track_cpu: true
-alert_thresholds:
-memory_percent: 85
-cpu_percent: 80
-disk_space_percent: 90
-
-# =============================================================================
-
-# NOTIFICATIONS
-
-# =============================================================================
-
-notifications:
+# Telegram Configuration
 telegram:
-enabled: true
-bot_token: “${TELEGRAM_BOT_TOKEN}”
-chat_id: “${TELEGRAM_CHAT_ID}”
+  enabled: true
+  min_profit_threshold: 25.0   # USD
+  max_notifications_per_hour: 15
+  status_report_interval: 1800  # seconds
+  error_notifications: true
 
-```
-# Notification types
-alerts:
-  trade_executed: true
-  large_opportunity: true          # > $100 profit
-  system_errors: true
-  daily_summary: true
-  ai_analysis: true
-```
-
-webhook:
-enabled: true
-url: “${WEBHOOK_URL:}”
-timeout: 10
-retry_attempts: 3
-
-email:
-enabled: true
-smtp_host: “${SMTP_HOST:}”
-smtp_port: 587
-username: “${SMTP_USERNAME:}”
-password: “${SMTP_PASSWORD:}”
-
-# =============================================================================
-
-# API CONFIGURATION
-
-# =============================================================================
-
-api:
-enabled: true
-host: “0.0.0.0”
-port: 8000
-
-# Security
-
-enable_cors: true
-enable_authentication: false       # Disable initially for local use
-jwt_secret: “${JWT_SECRET:}”
-
-# Rate limiting
-
-rate_limiting:
-enabled: true
-requests_per_minute: 60
-
-# API endpoints
-
-endpoints:
-health: true
-metrics: true
-trades: true
-opportunities: true
-strategies: true
-ai_dashboard: true
-
-# =============================================================================
-
-# RASPBERRY PI SPECIFIC
-
-# =============================================================================
-
-raspberry_pi:
-
-# Hardware monitoring
-
-hardware_monitoring:
-enabled: true
-check_temperature: true
-check_cpu_usage: true
-check_memory_usage: true
-check_disk_space: true
-
-# Temperature management
-
-temperature:
-warning_threshold: 70             # Celsius
-critical_threshold: 80            # Celsius
-auto_throttle: true
-
-# GPIO for status LED (optional)
-
-gpio:
-enabled: true                    # Enable if you have LED connected
-status_led_pin: 18
-activity_led_pin: 16
-
-# Performance optimization
-
-optimization:
-enable_cpu_governor: true
-cpu_governor: “performance”       # performance, powersave, ondemand
-enable_memory_overcommit: true
-
-# =============================================================================
-
-# DEVELOPMENT SETTINGS
-
-# =============================================================================
-
-development:
-
-# Debug settings
-
-debug_mode: false
-verbose_logging: false
-
-# Testing
-
-test_mode: false
-mock_exchanges: false
-
-# Profiling
-
-enable_profiling: false
-profile_output_dir: “profiles”
-
-# =============================================================================
-
-# ENVIRONMENT SPECIFIC OVERRIDES
-
-# =============================================================================
-
-# Production overrides (uncomment when deploying to production)
-
-# production:
-
-# trading:
-
-# paper_trading: false
-
-# logging:
-
-# level: WARNING
-
-# risk_management:
-
-# max_daily_loss: -500
-
-# max_position_size: 5000
-
-# Testing overrides
-
-testing:
-trading:
-paper_trading: true
-risk_management:
-max_position_size: 100
-strategies:
-spatial_arbitrage:
-min_spread_percent: 0.05
-# Quick fix overrides
-strategies:
-  spatial_arbitrage:
-    enabled: true
-    min_spread_percent: 0.05  # Lowered for testing
-    scan_frequency: 3         # More frequent scanning
-    max_position_size: 50     # Smaller position for testing
-    confidence_threshold: 0.5 # Lower threshold
-
-# Enhanced logging configuration
+# Logging Configuration  
 logging:
-  log_level: "DEBUG"
-  log_directory: "logs"
-  console_output: true
-  structured_logging: true
-  max_file_size_mb: 50
+  level: "INFO"
+  file_enabled: true
+  console_enabled: true
+  max_file_size: 10485760  # 10MB
   backup_count: 5
+
+# Database Configuration (if used)
+database:
+  enabled: false
   
-# Enhanced strategy settings for more activity
-strategies:
-  spatial_arbitrage:
-    enabled: true
-    scan_frequency: 2        # Scan every 2 seconds
-    min_spread_percent: 0.05 # Lower threshold = more opportunities
-    max_position_size: 50    # Smaller positions for testing
-    confidence_threshold: 0.3 # Lower threshold = more active
+# AI Configuration (if used)
+ai:
+  enabled: false
+  analysis_frequency: "daily"
+  auto_apply_safe_changes: false
+
+# System Configuration
+system:
+  health_check_interval: 60    # seconds
+  status_report_interval: 1800 # seconds
+  cleanup_interval: 3600       # seconds
