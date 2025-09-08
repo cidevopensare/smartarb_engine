@@ -1,0 +1,107 @@
+# SmartArb Engine - AI Configuration
+# Configuration for Claude AI integration and analysis
+
+ai:
+  # Basic AI settings
+  enabled: true
+  mode: "advisory_only"  # advisory_only, auto_execute, hybrid
+  
+  # Claude API settings
+  claude_api_key: "${CLAUDE_API_KEY:-}"
+  model: "claude-sonnet-4-20250514"
+  temperature: 0.7
+  max_tokens: 1000
+  
+  # Rate limiting
+  rate_limit_per_minute: 10
+  rate_limit_per_hour: 100
+  
+  # Analysis settings
+  analysis:
+    # Automatic analysis schedule
+    auto_analysis: true
+    analysis_schedule: "0 */2 * * *"  # Every 2 hours
+    
+    # Analysis triggers
+    triggers:
+      performance_drop: 0.05  # Trigger if performance drops 5%
+      error_rate: 0.10        # Trigger if error rate exceeds 10%
+      profit_threshold: -50   # Trigger if losses exceed $50
+    
+    # Analysis focus areas
+    focus_areas:
+      - "risk_management"
+      - "execution_speed"
+      - "market_conditions"
+      - "strategy_performance"
+      - "system_health"
+    
+    # Confidence thresholds
+    min_confidence: 0.6
+    high_confidence: 0.8
+  
+  # Code optimization settings
+  code_optimization:
+    enabled: true
+    auto_apply_safe: true    # Auto-apply safe optimizations
+    backup_before_changes: true
+    max_changes_per_day: 5
+    
+    # Safety checks
+    require_approval_for:
+      - "strategy_changes"
+      - "risk_parameter_changes"
+      - "api_key_changes"
+  
+  # Telegram integration
+  telegram:
+    ai_notifications: true
+    analysis_reports: true
+    optimization_alerts: true
+    emergency_alerts: true
+    
+    # Report frequency
+    daily_report: true
+    weekly_summary: true
+    
+    # Notification levels
+    notify_on:
+      - "critical_analysis"
+      - "optimization_opportunities"
+      - "performance_alerts"
+      - "system_recommendations"
+
+# Monitoring and metrics
+monitoring:
+  ai_metrics: true
+  performance_tracking: true
+  analysis_history: true
+  
+  # Retention
+  keep_analysis_days: 30
+  keep_metrics_days: 90
+  
+  # Alerts
+  alert_on_ai_failure: true
+  alert_on_analysis_delay: true
+
+# Advanced AI features (future expansion)
+advanced:
+  machine_learning: false
+  predictive_analysis: false
+  market_sentiment: false
+  news_analysis: false
+  
+  # These features are disabled by default
+  # Enable them as they become available
+  experimental_features: false
+
+# Logging
+logging:
+  ai_log_level: "INFO"
+  analysis_log_level: "INFO"
+  detailed_logging: false
+  
+  # Log files
+  ai_log_file: "logs/ai_system.log"
+  analysis_log_file: "logs/ai_analysis.log"

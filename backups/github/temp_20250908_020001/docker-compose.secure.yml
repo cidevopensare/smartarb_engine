@@ -1,0 +1,502 @@
+version: '3.8'
+
+# SmartArb Engine - Secure Production Docker Compose
+# Enhanced security configuration for Raspberry Pi 5 deployment
+
+services:
+  # =============================================================================
+  # SMARTARB ENGINE - Main Application (SECURE)
+  # =============================================================================
+  smartarb-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile.secure
+      target: production
+    container_name: smartarb-engine-secure
+    restart: unless-stopped
+    
+    # Security configuration
+    user: "1001:1001"  # Non-root user
+    read_only: true    # Read-only filesystem
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /var/tmp:noexec,nosuid,size=50m
+    
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE  # Only if binding to port 80/443
+    
+    security_opt:
+      - no-new-privileges:true
+      - apparmor:docker-default
+    
+    # Resource limits (optimized for RPi 5)
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.75'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    
+    # Environment - using secrets
+    environment:
+      - ENVIRONMENT=production
+      - DEBUG_MODE=false
+      - LOG_LEVEL=INFO
+      
+      # Database connections (using secrets)
+      - POSTGRES_HOST=postgres-secure
+      - POSTGRES_PORT=5432
+      - POSTGRES_DATABASE=smartarb_prod
+      - POSTGRES_USERNAME=smartarb_user
+      - POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password
+      
+      - REDIS_HOST=redis-secure
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - REDIS_PASSWORD_FILE=/run/secrets/redis_password
+      
+      # AI Integration
+      - CLAUDE_API_KEY_FILE=/run/secrets/claude_api_key
+      
+      # Notifications
+      - TELEGRAM_BOT_TOKEN_FILE=/run/secrets/telegram_bot_token
+      - TELEGRAM_CHAT_ID_FILE=/run/secrets/telegram_chat_id
+      
+      # Trading configuration
+      - TRADING_MODE=LIVE  # Change to PAPER for testing
+      - MAX_DAILY_LOSS=50
+      - MAX_POSITION_SIZE=500
+      - ENABLE_AI_ANALYSIS=true
+      
+      # Security settings
+      - API_RATE_LIMIT=1000
+      - SESSION_TIMEOUT=3600
+      - ENABLE_2FA=true
+    
+    # Secrets configuration
+    secrets:
+      - postgres_password
+      - redis_password
+      - kraken_api_key
+      - kraken_api_secret
+      - bybit_api_key
+      - bybit_api_secret
+      - mexc_api_key
+      - mexc_api_secret
+      - claude_api_key
+      - telegram_bot_token
+      - telegram_chat_id
+      - ssl_cert
+      - ssl_key
+    
+    volumes:
+      # Read-only application code
+      - ./src:/app/src:ro
+      - ./config:/app/config:ro
+      
+      # Writable volumes with specific permissions
+      - smartarb-logs:/app/logs:rw
+      - smartarb-data:/app/data:rw
+      - smartarb-backups:/app/backups:rw
+      
+      # External SSD mount for RPi (optional)
+      - /mnt/external-ssd/smartarb:/app/external:rw
+    
+    ports:
+      - "8000:8000"  # Health check endpoint only
+    
+    networks:
+      - smartarb-internal
+      - smartarb-db
+    
+    depends_on:
+      postgres-secure:
+        condition: service_healthy
+      redis-secure:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "python", "/app/scripts/health_check.py"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+
+  # =============================================================================
+  # POSTGRESQL - Secure Database
+  # =============================================================================
+  postgres-secure:
+    image: postgres:16.1-alpine
+    container_name: smartarb-postgres-secure
+    restart: unless-stopped
+    
+    # Security configuration
+    user: postgres
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /var/run/postgresql:noexec,nosuid,size=10m
+    
+    security_opt:
+      - no-new-privileges:true
+      - apparmor:docker-default
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+          cpus: '0.1'
+    
+    environment:
+      - POSTGRES_DB=smartarb_prod
+      - POSTGRES_USER=smartarb_user
+      - POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password
+      - POSTGRES_INITDB_ARGS=--auth-host=md5 --auth-local=trust
+      - PGDATA=/var/lib/postgresql/data/pgdata
+      
+      # Security settings
+      - POSTGRES_HOST_AUTH_METHOD=md5
+      - POSTGRES_SHARED_PRELOAD_LIBRARIES=pg_stat_statements
+    
+    secrets:
+      - postgres_password
+    
+    volumes:
+      - smartarb-postgres-data:/var/lib/postgresql/data:rw
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+      - ./database/config/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      
+      # Backup volume (external SSD for RPi)
+      - /mnt/external-ssd/postgres-backups:/backups:rw
+    
+    networks:
+      - smartarb-db
+    
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartarb_user -d smartarb_prod"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    
+    # PostgreSQL specific optimizations for RPi
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c max_connections=50
+      -c shared_buffers=64MB
+      -c effective_cache_size=256MB
+      -c maintenance_work_mem=32MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=2MB
+      -c min_wal_size=1GB
+      -c max_wal_size=4GB
+      -c ssl=on
+      -c ssl_cert_file=/run/secrets/ssl_cert
+      -c ssl_key_file=/run/secrets/ssl_key
+
+  # =============================================================================
+  # REDIS - Secure Cache/Message Queue
+  # =============================================================================
+  redis-secure:
+    image: redis:7.2.3-alpine
+    container_name: smartarb-redis-secure
+    restart: unless-stopped
+    
+    # Security configuration
+    user: "999:999"  # Redis user
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+    
+    security_opt:
+      - no-new-privileges:true
+      - apparmor:docker-default
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+        reservations:
+          memory: 64M
+          cpus: '0.05'
+    
+    secrets:
+      - redis_password
+    
+    volumes:
+      - smartarb-redis-data:/data:rw
+      - ./redis/redis.conf:/etc/redis/redis.conf:ro
+    
+    networks:
+      - smartarb-db
+    
+    command: >
+      redis-server /etc/redis/redis.conf
+      --requirepass "$(cat /run/secrets/redis_password)"
+      --maxmemory 100mb
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+      --appendonly yes
+      --appendfsync everysec
+      --bind 0.0.0.0
+      --protected-mode yes
+      --port 6379
+    
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  # =============================================================================
+  # NGINX - Reverse Proxy & SSL Termination
+  # =============================================================================
+  nginx-proxy:
+    image: nginx:1.25.3-alpine
+    container_name: smartarb-nginx-secure
+    restart: unless-stopped
+    
+    # Security configuration
+    user: "101:101"  # Nginx user
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:noexec,nosuid,size=50m
+      - /var/run:noexec,nosuid,size=10m
+      - /tmp:noexec,nosuid,size=10m
+    
+    security_opt:
+      - no-new-privileges:true
+      - apparmor:docker-default
+    
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETGID
+      - SETUID
+    
+    secrets:
+      - ssl_cert
+      - ssl_key
+    
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - smartarb-logs:/var/log/nginx:rw
+    
+    ports:
+      - "80:80"    # HTTP (redirects to HTTPS)
+      - "443:443"  # HTTPS
+    
+    networks:
+      - smartarb-internal
+    
+    depends_on:
+      - smartarb-engine
+    
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # =============================================================================
+  # MONITORING - Prometheus & Grafana (Optional)
+  # =============================================================================
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: smartarb-prometheus
+    restart: unless-stopped
+    
+    user: "65534:65534"  # Nobody user
+    read_only: true
+    
+    security_opt:
+      - no-new-privileges:true
+    
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+    
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - smartarb-prometheus-data:/prometheus:rw
+    
+    ports:
+      - "9090:9090"
+    
+    networks:
+      - smartarb-internal
+    
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'  # 7 days retention for RPi
+      - '--storage.tsdb.retention.size=1GB'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--web.route-prefix=/'
+
+  # =============================================================================
+  # LOG AGGREGATION - Loki (Lightweight for RPi)
+  # =============================================================================
+  loki:
+    image: grafana/loki:2.9.2
+    container_name: smartarb-loki
+    restart: unless-stopped
+    
+    user: "10001:10001"  # Loki user
+    read_only: true
+    
+    security_opt:
+      - no-new-privileges:true
+    
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+    
+    volumes:
+      - ./monitoring/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - smartarb-loki-data:/loki:rw
+    
+    ports:
+      - "3100:3100"
+    
+    networks:
+      - smartarb-internal
+    
+    command: -config.file=/etc/loki/local-config.yaml
+
+# =============================================================================
+# SECRETS CONFIGURATION
+# =============================================================================
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password.txt
+  redis_password:
+    file: ./secrets/redis_password.txt
+  kraken_api_key:
+    file: ./secrets/kraken_api_key.txt
+  kraken_api_secret:
+    file: ./secrets/kraken_api_secret.txt
+  bybit_api_key:
+    file: ./secrets/bybit_api_key.txt
+  bybit_api_secret:
+    file: ./secrets/bybit_api_secret.txt
+  mexc_api_key:
+    file: ./secrets/mexc_api_key.txt
+  mexc_api_secret:
+    file: ./secrets/mexc_api_secret.txt
+  claude_api_key:
+    file: ./secrets/claude_api_key.txt
+  telegram_bot_token:
+    file: ./secrets/telegram_bot_token.txt
+  telegram_chat_id:
+    file: ./secrets/telegram_chat_id.txt
+  ssl_cert:
+    file: ./secrets/ssl_cert.pem
+  ssl_key:
+    file: ./secrets/ssl_key.pem
+
+# =============================================================================
+# NETWORKS CONFIGURATION
+# =============================================================================
+networks:
+  smartarb-internal:
+    driver: bridge
+    internal: false  # Allow external access for API calls
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+    driver_opts:
+      com.docker.network.bridge.name: smartarb-br0
+  
+  smartarb-db:
+    driver: bridge
+    internal: true  # Database network is isolated
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+    driver_opts:
+      com.docker.network.bridge.name: smartarb-db-br0
+
+# =============================================================================
+# VOLUMES CONFIGURATION
+# =============================================================================
+volumes:
+  # Application volumes
+  smartarb-logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/external-ssd/smartarb/logs  # External SSD for RPi
+  
+  smartarb-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/external-ssd/smartarb/data
+  
+  smartarb-backups:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/external-ssd/smartarb/backups
+  
+  # Database volumes
+  smartarb-postgres-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/external-ssd/postgres/data
+  
+  smartarb-redis-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/external-ssd/redis/data
+  
+  # Monitoring volumes
+  smartarb-prometheus-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/external-ssd/prometheus/data
+  
+  smartarb-loki-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/external-ssd/loki/data

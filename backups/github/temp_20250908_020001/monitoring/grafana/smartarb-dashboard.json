@@ -1,0 +1,819 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "SmartArb Engine - Trading Dashboard",
+    "tags": ["smartarb", "trading", "arbitrage", "cryptocurrency"],
+    "style": "dark",
+    "timezone": "browser",
+    "editable": true,
+    "graphTooltip": 1,
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"],
+      "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d"]
+    },
+    "refresh": "30s",
+    "version": 1,
+    "panels": [
+      {
+        "id": 1,
+        "title": "🚀 SmartArb Engine Overview",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "up{job=\"smartarb-engine\"}",
+            "refId": "A",
+            "legendFormat": "Engine Status"
+          }
+        ],
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 0,
+          "y": 0
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "displayMode": "basic"
+            },
+            "mappings": [
+              {
+                "options": {
+                  "0": {
+                    "color": "red",
+                    "text": "DOWN ❌"
+                  },
+                  "1": {
+                    "color": "green",
+                    "text": "RUNNING ✅"
+                  }
+                },
+                "type": "value"
+              }
+            ],
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": null
+                },
+                {
+                  "color": "green",
+                  "value": 1
+                }
+              ]
+            }
+          }
+        },
+        "options": {
+          "colorMode": "background",
+          "graphMode": "none",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "calcs": ["lastNotNull"],
+            "fields": "",
+            "values": false
+          },
+          "textMode": "value"
+        }
+      },
+      {
+        "id": 2,
+        "title": "💰 Daily P&L",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "smartarb_daily_profit_usd - smartarb_daily_loss_usd",
+            "refId": "A",
+            "legendFormat": "Net P&L"
+          }
+        ],
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 6,
+          "y": 0
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "custom": {
+              "displayMode": "basic"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": null
+                },
+                {
+                  "color": "yellow",
+                  "value": 0
+                },
+                {
+                  "color": "green",
+                  "value": 1
+                }
+              ]
+            },
+            "unit": "currencyUSD"
+          }
+        },
+        "options": {
+          "colorMode": "background",
+          "graphMode": "area",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "calcs": ["lastNotNull"],
+            "fields": "",
+            "values": false
+          },
+          "textMode": "value"
+        }
+      },
+      {
+        "id": 3,
+        "title": "📊 Trading Success Rate",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "(rate(smartarb_trades_successful_total[24h]) / rate(smartarb_trades_attempted_total[24h])) * 100",
+            "refId": "A",
+            "legendFormat": "Success Rate"
+          }
+        ],
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 12,
+          "y": 0
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": null
+                },
+                {
+                  "color": "yellow",
+                  "value": 50
+                },
+                {
+                  "color": "green",
+                  "value": 80
+                }
+              ]
+            },
+            "unit": "percent"
+          }
+        },
+        "options": {
+          "colorMode": "background",
+          "graphMode": "area",
+          "justifyMode": "center",
+          "orientation": "horizontal",
+          "reduceOptions": {
+            "calcs": ["lastNotNull"],
+            "fields": "",
+            "values": false
+          },
+          "textMode": "value"
+        }
+      },
+      {
+        "id": 4,
+        "title": "🔄 Active Exchanges",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "count(smartarb_exchange_connection_status == 1)",
+            "refId": "A",
+            "legendFormat": "Connected Exchanges"
+          }
+        ],
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 18,
+          "y": 0
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": null
+                },
+                {
+                  "color": "yellow",
+                  "value": 1
+                },
+                {
+                  "color": "green",
+                  "value": 2
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "📈 Trading Volume (Last 24h)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(smartarb_trading_volume_usd[1h])",
+            "refId": "A",
+            "legendFormat": "Trading Volume USD/h"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 4
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 20,
+              "gradientMode": "opacity",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "lineInterpolation": "smooth",
+              "lineWidth": 2,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "unit": "currencyUSD"
+          }
+        },
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom"
+          },
+          "tooltip": {
+            "mode": "single"
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "🎯 Arbitrage Opportunities",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(smartarb_opportunities_found_total[5m])",
+            "refId": "A",
+            "legendFormat": "Opportunities/min"
+          },
+          {
+            "expr": "rate(smartarb_opportunities_executed_total[5m])",
+            "refId": "B",
+            "legendFormat": "Executed/min"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 4
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 20,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "lineInterpolation": "linear",
+              "lineWidth": 2,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            }
+          }
+        },
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom"
+          },
+          "tooltip": {
+            "mode": "multi"
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "💱 Exchange Performance",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "smartarb_exchange_connection_status",
+            "refId": "A",
+            "legendFormat": "Status - {{exchange}}",
+            "format": "table",
+            "instant": true
+          },
+          {
+            "expr": "smartarb_exchange_latency_seconds",
+            "refId": "B",
+            "legendFormat": "Latency - {{exchange}}",
+            "format": "table",
+            "instant": true
+          },
+          {
+            "expr": "rate(smartarb_exchange_requests_total[5m])",
+            "refId": "C",
+            "legendFormat": "Req/s - {{exchange}}",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 12
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "displayMode": "auto"
+            },
+            "mappings": [
+              {
+                "options": {
+                  "0": {
+                    "color": "red",
+                    "text": "Disconnected"
+                  },
+                  "1": {
+                    "color": "green",
+                    "text": "Connected"
+                  }
+                },
+                "type": "value"
+              }
+            ]
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Status"
+              },
+              "properties": [
+                {
+                  "id": "custom.displayMode",
+                  "value": "color-background"
+                }
+              ]
+            }
+          ]
+        },
+        "options": {
+          "showHeader": true,
+          "sortBy": [
+            {
+              "desc": false,
+              "displayName": "Exchange"
+            }
+          ]
+        }
+      },
+      {
+        "id": 8,
+        "title": "⚡ System Resources - Raspberry Pi",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
+            "refId": "A",
+            "legendFormat": "CPU Usage %"
+          },
+          {
+            "expr": "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100",
+            "refId": "B",
+            "legendFormat": "Memory Usage %"
+          },
+          {
+            "expr": "node_hwmon_temp_celsius",
+            "refId": "C",
+            "legendFormat": "CPU Temperature °C"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 12
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": true,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "CPU Temperature °C"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "mode": "continuous-GrYlRd"
+                  }
+                },
+                {
+                  "id": "custom.axisPlacement",
+                  "value": "right"
+                }
+              ]
+            }
+          ]
+        },
+        "options": {
+          "legend": {
+            "calcs": ["last", "max"],
+            "displayMode": "table",
+            "placement": "bottom"
+          },
+          "tooltip": {
+            "mode": "multi"
+          }
+        }
+      },
+      {
+        "id": 9,
+        "title": "🧠 AI System Status",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "smartarb_ai_analysis_duration_seconds",
+            "refId": "A",
+            "legendFormat": "Analysis Duration (s)"
+          },
+          {
+            "expr": "smartarb_ai_recommendation_confidence",
+            "refId": "B",
+            "legendFormat": "Confidence Score"
+          },
+          {
+            "expr": "rate(smartarb_ai_analysis_total[1h])",
+            "refId": "C",
+            "legendFormat": "Analysis Rate (per hour)"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 20
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 20,
+              "gradientMode": "opacity",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "lineInterpolation": "smooth",
+              "lineWidth": 2,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Confidence Score"
+              },
+              "properties": [
+                {
+                  "id": "max",
+                  "value": 1
+                },
+                {
+                  "id": "min",
+                  "value": 0
+                },
+                {
+                  "id": "unit",
+                  "value": "percentunit"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": 10,
+        "title": "📊 Database Performance",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "pg_stat_database_numbackends",
+            "refId": "A",
+            "legendFormat": "Active Connections"
+          },
+          {
+            "expr": "rate(pg_stat_database_xact_commit[5m])",
+            "refId": "B",
+            "legendFormat": "Transactions/sec"
+          },
+          {
+            "expr": "pg_stat_statements_mean_time_ms",
+            "refId": "C",
+            "legendFormat": "Avg Query Time (ms)"
+          }
+        ],
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 20
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": true,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": 11,
+        "title": "🚨 Active Alerts",
+        "type": "alertlist",
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 28
+        },
+        "options": {
+          "alertName": "",
+          "dashboardAlerts": false,
+          "groupBy": ["alertname"],
+          "groupMode": "default",
+          "maxItems": 20,
+          "query": "",
+          "showOptions": "current",
+          "sortOrder": 1,
+          "stateFilter": {
+            "error": true,
+            "firing": true,
+            "noData": false,
+            "normal": false,
+            "pending": true
+          },
+          "tags": ["smartarb"]
+        }
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "current": {
+            "selected": false,
+            "text": "prometheus",
+            "value": "prometheus"
+          },
+          "hide": 0,
+          "includeAll": false,
+          "label": "Datasource",
+          "multi": false,
+          "name": "datasource",
+          "options": [],
+          "query": "prometheus",
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "type": "datasource"
+        },
+        {
+          "current": {
+            "selected": true,
+            "text": "All",
+            "value": "$__all"
+          },
+          "datasource": "${datasource}",
+          "definition": "label_values(smartarb_exchange_connection_status, exchange)",
+          "hide": 0,
+          "includeAll": true,
+          "label": "Exchange",
+          "multi": true,
+          "name": "exchange",
+          "options": [],
+          "query": "label_values(smartarb_exchange_connection_status, exchange)",
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "sort": 1,
+          "type": "query"
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": "-- Grafana --",
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        },
+        {
+          "datasource": "${datasource}",
+          "enable": true,
+          "expr": "ALERTS{alertname=~\"SmartArb.*\", alertstate=\"firing\"}",
+          "iconColor": "red",
+          "name": "SmartArb Alerts",
+          "showIn": 0,
+          "step": "60s",
+          "tagKeys": "alertname,severity",
+          "tags": ["smartarb"],
+          "textFormat": "{{alertname}}: {{description}}",
+          "titleFormat": "Alert"
+        }
+      ]
+    },
+    "links": [
+      {
+        "asDropdown": false,
+        "icon": "external link",
+        "includeVars": false,
+        "keepTime": false,
+        "tags": ["smartarb"],
+        "targetBlank": true,
+        "title": "SmartArb Documentation",
+        "tooltip": "",
+        "type": "link",
+        "url": "https://docs.smartarb.dev"
+      }
+    ]
+  }
+}

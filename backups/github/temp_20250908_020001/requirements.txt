@@ -1,0 +1,38 @@
+# SmartArb Engine Dependencies
+
+# Configuration and Data Handling
+PyYAML>=6.0
+python-dotenv>=1.0.0
+
+# Async and HTTP
+aiohttp>=3.8.0
+asyncio-mqtt>=0.13.0
+
+# Data Processing  
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Exchange APIs (per future implementazioni)
+ccxt>=4.0.0
+
+# Logging and Monitoring
+structlog>=23.0.0
+
+# Database (per future implementazioni)
+asyncpg>=0.28.0
+redis>=4.5.0
+
+# Web Framework (per dashboard futuro)
+fastapi>=0.100.0
+uvicorn>=0.22.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+
+# Security
+cryptography>=41.0.0
+
+# Development tools
+black>=23.0.0
+flake8>=6.0.0

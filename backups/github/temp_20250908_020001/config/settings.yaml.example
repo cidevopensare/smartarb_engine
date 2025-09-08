@@ -1,0 +1,424 @@
+# SmartArb Engine Configuration Example
+
+# Copy this file to settings.yaml and customize for your setup
+
+# =============================================================================
+
+# ENGINE CONFIGURATION
+
+# =============================================================================
+
+engine:
+name: “SmartArb Engine”
+version: “1.0.0”
+debug_mode: false
+environment: “production”  # development, staging, production
+
+# =============================================================================
+
+# LOGGING CONFIGURATION
+
+# =============================================================================
+
+logging:
+log_level: “INFO”          # DEBUG, INFO, WARNING, ERROR, CRITICAL
+log_directory: “logs”
+max_file_size_mb: 50
+backup_count: 10
+console_output: true
+structured_logging: true
+
+# =============================================================================
+
+# EXCHANGE CONFIGURATIONS (see exchanges.yaml for details)
+
+# =============================================================================
+
+exchanges:
+kraken:
+enabled: false
+api_key: “${KRAKEN_API_KEY}”
+api_secret: “${KRAKEN_API_SECRET}”
+sandbox: false
+timeout: 30
+rate_limit: 15
+
+bybit:
+enabled: false
+api_key: “${BYBIT_API_KEY}”
+api_secret: “${BYBIT_API_SECRET}”
+sandbox: false
+timeout: 10
+rate_limit: 120
+category: “spot”           # spot, linear, inverse
+
+mexc:
+enabled: false
+api_key: “${MEXC_API_KEY}”
+api_secret: “${MEXC_API_SECRET}”
+sandbox: false
+timeout: 15
+rate_limit: 20
+
+# =============================================================================
+
+# TRADING STRATEGIES
+
+# =============================================================================
+
+strategies:
+
+# Spatial Arbitrage (Cross-exchange price differences)
+
+spatial_arbitrage:
+enabled: true
+priority: 1
+min_spread_percent: 0.20          # Minimum 0.20% spread required
+max_position_size: 1000           # Max $1000 USDT per trade
+confidence_threshold: 0.7         # 70% confidence minimum
+scan_frequency: 5                 # Scan every 5 seconds
+opportunity_ttl_seconds: 30       # Opportunity expires after 30s
+
+```
+# Trading pairs to monitor
+trading_pairs:
+  - "BTC/USDT"
+  - "ETH/USDT"
+  - "ADA/USDT"
+  - "DOT/USDT"
+  - "LINK/USDT"
+  - "MATIC/USDT"
+
+# Exchange pair preferences
+preferred_pairs:
+  - ["kraken", "bybit"]
+  - ["bybit", "mexc"]
+  - ["kraken", "mexc"]
+```
+
+# Triangular Arbitrage (Future implementation)
+
+triangular_arbitrage:
+enabled: false
+priority: 2
+min_profit_percent: 0.15
+max_position_size: 500
+
+# Statistical Arbitrage (Future implementation)
+
+statistical_arbitrage:
+enabled: false
+priority: 3
+lookback_period_hours: 24
+z_score_threshold: 2.0
+
+# =============================================================================
+
+# RISK MANAGEMENT
+
+# =============================================================================
+
+risk_management:
+
+# Daily limits
+
+max_daily_loss: 50                  # Max $50 loss per day
+max_position_size: 1000             # Max $1000 per position
+max_total_exposure: 5000            # Max $5000 total exposure
+
+# Risk scoring
+
+max_risk_score: 0.8                 # Max 0.8 risk score (0-1)
+min_confidence_level: 0.7           # Min 70% confidence
+
+# Stop loss
+
+enable_stop_loss: true
+stop_loss_percent: -2.0             # -2% stop loss
+emergency_stop_enabled: true
+
+# Circuit breaker
+
+circuit_breaker:
+enabled: true
+loss_threshold: -100              # Stop trading after $100 loss
+lookback_minutes: 60              # In 60 minute window
+cooldown_minutes: 30              # Wait 30 min before resuming
+
+# Position sizing
+
+kelly_fraction: 0.25                # Conservative Kelly criterion
+max_portfolio_risk: 0.05            # 5% max portfolio risk
+
+# =============================================================================
+
+# AI INTEGRATION (CLAUDE)
+
+# =============================================================================
+
+ai:
+enabled: false                      # Enable AI analysis
+claude_api_key: “${CLAUDE_API_KEY}”
+
+# Model configuration
+
+model: “claude-3-sonnet-20240229”
+max_tokens: 4000
+temperature: 0.3                    # Lower = more focused
+rate_limit_per_minute: 50
+
+# Features
+
+auto_optimization: false            # Auto-apply optimizations
+code_updates: false                 # Auto code updates
+performance_analysis: true          # Performance reviews
+risk_assessment: true               # AI risk analysis
+
+# Analysis scheduling (cron format)
+
+analysis_schedule:
+performance_review: “0 8 * * *”      # Daily 8 AM
+strategy_optimization: “0 12 * * 1”  # Monday noon
+risk_assessment: “0 */4 * * *”       # Every 4 hours
+market_analysis: “0 */2 * * *”       # Every 2 hours
+
+# =============================================================================
+
+# DATABASE CONFIGURATION
+
+# =============================================================================
+
+database:
+postgresql:
+enabled: false
+host: “${POSTGRES_HOST:localhost}”
+port: 5432
+database: “${POSTGRES_DATABASE:smartarb}”
+username: “${POSTGRES_USERNAME:smartarb_user}”
+password: “${POSTGRES_PASSWORD}”
+
+```
+# Connection pool (Raspberry Pi optimized)
+min_connections: 2
+max_connections: 8
+connection_timeout: 30
+
+# Performance settings
+statement_timeout: 30000          # 30 seconds
+query_timeout: 10000              # 10 seconds
+```
+
+redis:
+enabled: false
+host: “${REDIS_HOST:localhost}”
+port: 6379
+db: 0
+password: “${REDIS_PASSWORD}”
+connection_timeout: 5
+
+```
+# Cache TTL settings (seconds)
+cache_ttl:
+  ticker: 10
+  orderbook: 5
+  balance: 30
+  portfolio: 60
+```
+
+# =============================================================================
+
+# PORTFOLIO MANAGEMENT
+
+# =============================================================================
+
+portfolio:
+
+# Balance tracking
+
+update_interval_seconds: 30
+track_pnl: true
+
+# Rebalancing
+
+auto_rebalance: false
+rebalance_threshold: 0.05           # 5% deviation
+
+# Target allocation (if auto_rebalance enabled)
+
+target_allocation:
+USDT: 70.0                        # 70% stable
+BTC: 20.0                         # 20% BTC
+ETH: 10.0                         # 10% ETH
+
+# =============================================================================
+
+# NOTIFICATIONS
+
+# =============================================================================
+
+notifications:
+
+# Telegram notifications
+
+telegram:
+enabled: false
+bot_token: “${TELEGRAM_BOT_TOKEN}”
+chat_id: “${TELEGRAM_CHAT_ID}”
+
+```
+# Notification levels
+notify_on:
+  - "error"
+  - "critical"
+  - "circuit_breaker"
+  - "large_profit"
+```
+
+# Email notifications
+
+email:
+enabled: false
+smtp_server: “${SMTP_SERVER:smtp.gmail.com}”
+smtp_port: 587
+username: “${SMTP_USERNAME}”
+password: “${SMTP_PASSWORD}”
+to_address: “${NOTIFICATION_EMAIL}”
+
+```
+# Email templates
+subject_prefix: "[SmartArb]"
+```
+
+# Webhook notifications
+
+webhook:
+enabled: false
+url: “${WEBHOOK_URL}”
+timeout: 10
+retry_count: 3
+
+# =============================================================================
+
+# API AND MONITORING
+
+# =============================================================================
+
+api:
+
+# REST API
+
+rest_api:
+enabled: true
+host: “0.0.0.0”
+port: 8000
+debug: false
+cors_enabled: true
+
+```
+# Authentication (future)
+auth_enabled: false
+jwt_secret: "${JWT_SECRET}"
+```
+
+# WebSocket API
+
+websocket:
+enabled: true
+port: 8001
+max_connections: 100
+
+# Monitoring
+
+monitoring:
+metrics_enabled: true
+metrics_interval_seconds: 60
+health_check_interval: 30
+
+# Performance tracking
+
+track_latency: true
+track_memory: true
+track_cpu: true
+
+# =============================================================================
+
+# RASPBERRY PI SPECIFIC SETTINGS
+
+# =============================================================================
+
+raspberry_pi:
+
+# Performance optimization
+
+optimize_for_rpi: true
+max_cpu_percent: 80
+max_memory_mb: 1000
+
+# GPIO (future features)
+
+gpio_enabled: false
+status_led_pin: 18
+
+# System monitoring
+
+temperature_monitoring: true
+cpu_throttle_monitoring: true
+
+# =============================================================================
+
+# SECURITY SETTINGS
+
+# =============================================================================
+
+security:
+
+# API security
+
+api_rate_limiting: true
+max_requests_per_minute: 100
+
+# Data encryption
+
+encrypt_sensitive_data: true
+
+# Audit logging
+
+audit_logs: true
+log_api_calls: true
+
+# IP restrictions (optional)
+
+allowed_ips: []                     # Empty = allow all
+
+# =============================================================================
+
+# DEVELOPMENT AND TESTING
+
+# =============================================================================
+
+development:
+
+# Paper trading mode
+
+paper_trading: true                 # Start with paper trading!
+
+# Testing
+
+enable_backtesting: false
+backtest_data_path: “data/backtest”
+
+# Development features
+
+hot_reload: false
+debug_api: false
+mock_exchanges: false
+
+# =============================================================================
+
+# ENVIRONMENT VARIABLE SUBSTITUTION
+
+# =============================================================================
+
+# Use ${VAR_NAME} or ${VAR_NAME:default_value} in any string value
+
+# Variables are loaded from .env file and environment

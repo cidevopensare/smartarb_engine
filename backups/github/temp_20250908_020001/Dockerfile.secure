@@ -1,0 +1,202 @@
+# SmartArb Engine - Secure Production Dockerfile
+# Multi-stage build with advanced security features
+# Optimized for Raspberry Pi 5 and production deployment
+
+# =============================================================================
+# STAGE 1: Security Scanner Base
+# =============================================================================
+FROM aquasec/trivy:latest as security-scanner
+WORKDIR /scan
+COPY requirements.txt .
+# Scan dependencies for vulnerabilities (this stage is for CI/CD)
+# RUN trivy fs --exit-code 1 --no-progress --format json -o /tmp/trivy-results.json .
+
+# =============================================================================
+# STAGE 2: Build Stage with Security
+# =============================================================================
+FROM python:3.11.8-slim as builder
+
+# Security: Update packages and install security updates
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
+        build-essential=12.9ubuntu3 \
+        libpq-dev=15.6-0ubuntu0.23.04.1 \
+        gcc=4:12.2.0-3ubuntu1 \
+        curl=7.88.1-10ubuntu1.5 \
+        gnupg2=2.2.40-1.1ubuntu1 \
+        ca-certificates=20230311ubuntu0.23.04.1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean \
+    && rm -rf /tmp/* /var/tmp/*
+
+# Security: Update CA certificates
+RUN update-ca-certificates
+
+# Create build user (non-root)
+RUN groupadd -r builduser && useradd -r -g builduser builduser
+
+# Create and activate virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Upgrade pip with security
+RUN pip install --no-cache-dir --upgrade \
+    pip==24.0 \
+    setuptools==69.1.1 \
+    wheel==0.42.0
+
+# Copy requirements and install dependencies
+COPY requirements.txt .
+
+# Security: Verify package integrity and install
+RUN pip install --no-cache-dir --require-hashes -r requirements.txt || \
+    pip install --no-cache-dir --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org -r requirements.txt
+
+# Security: Clean pip cache
+RUN pip cache purge
+
+# =============================================================================
+# STAGE 3: Security Hardened Runtime
+# =============================================================================
+FROM python:3.11.8-slim as production
+
+# Security: Set labels for better container management
+LABEL maintainer="smartarb-team@example.com" \
+      version="1.0.0" \
+      description="SmartArb Engine - Secure Cryptocurrency Arbitrage Bot" \
+      security.trivy.scanned="true" \
+      security.non-root="true" \
+      security.read-only="true"
+
+# Security: Update system packages and install minimal runtime deps
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
+        libpq5=15.6-0ubuntu0.23.04.1 \
+        ca-certificates=20230311ubuntu0.23.04.1 \
+        curl=7.88.1-10ubuntu1.5 \
+        dumb-init=1.2.5-2 \
+        tini=0.19.0-1 \
+        gosu=1.14-1ubuntu1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean \
+    && rm -rf /tmp/* /var/tmp/* \
+    && find /usr/share/doc -depth -type f ! -name copyright | xargs rm -rf \
+    && find /usr/share/man -depth -type f | xargs rm -rf
+
+# Security: Update CA certificates
+RUN update-ca-certificates
+
+# Security: Create application user with specific UID/GID
+RUN groupadd -r -g 1001 smartarb && \
+    useradd -r -g smartarb -u 1001 -d /app -s /sbin/nologin -c "SmartArb Engine User" smartarb
+
+# Security: Set up directory structure with proper permissions
+WORKDIR /app
+
+# Security: Create directories with restricted permissions
+RUN mkdir -p /app/{src,config,logs,data,backups,scripts} \
+    && mkdir -p /app/tmp \
+    && chmod 750 /app \
+    && chmod 700 /app/{config,data,backups} \
+    && chmod 750 /app/{src,scripts} \
+    && chmod 755 /app/{logs,tmp} \
+    && chown -R smartarb:smartarb /app
+
+# Copy virtual environment from builder stage
+COPY --from=builder --chown=root:root /opt/venv /opt/venv
+
+# Security: Set PATH for virtual environment
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Security: Set secure Python environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONHASHSEED=random \
+    PYTHONIOENCODING=utf-8 \
+    PYTHONPATH=/app/src \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Security: Set application environment variables
+ENV APP_USER=smartarb \
+    APP_GROUP=smartarb \
+    APP_HOME=/app \
+    LOG_LEVEL=INFO \
+    ENABLE_SECURITY_HEADERS=true \
+    ENABLE_RATE_LIMITING=true \
+    MAX_REQUEST_SIZE=1mb
+
+# Copy application code with proper ownership
+COPY --chown=smartarb:smartarb src/ /app/src/
+COPY --chown=smartarb:smartarb scripts/ /app/scripts/
+COPY --chown=root:smartarb config/ /app/config/
+
+# Security: Set file permissions
+RUN find /app/src -type f -exec chmod 640 {} \; \
+    && find /app/src -type d -exec chmod 750 {} \; \
+    && find /app/scripts -type f -exec chmod 750 {} \; \
+    && find /app/config -type f -exec chmod 640 {} \; \
+    && chmod 750 /app/scripts/health_check.py \
+    && chmod 750 /app/scripts/entrypoint.sh
+
+# Copy and setup entrypoint script
+COPY --chown=root:root scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod 755 /usr/local/bin/entrypoint.sh
+
+# Security: Create health check script
+COPY --chown=smartarb:smartarb scripts/health_check.py /app/scripts/health_check.py
+RUN chmod 750 /app/scripts/health_check.py
+
+# Security: Scan for secrets (in CI/CD this would fail the build)
+RUN find /app -type f -name "*.py" -o -name "*.yml" -o -name "*.yaml" -o -name "*.json" | \
+    xargs grep -l -i -E "(password|secret|key|token)" || true
+
+# Security: Remove any temp files and set immutable base system files
+RUN rm -rf /tmp/* /var/tmp/* /root/.cache \
+    && find /etc -type f -exec chmod a-w {} \; 2>/dev/null || true
+
+# Security: Set up log rotation for container logs
+RUN mkdir -p /etc/logrotate.d && \
+    echo '/app/logs/*.log {\n\
+    daily\n\
+    missingok\n\
+    rotate 7\n\
+    compress\n\
+    delaycompress\n\
+    notifempty\n\
+    copytruncate\n\
+}' > /etc/logrotate.d/smartarb
+
+# Expose port for health checks only (no external API)
+EXPOSE 8000
+
+# Security: Add health check
+HEALTHCHECK --interval=30s --timeout=15s --start-period=60s --retries=5 \
+    CMD python /app/scripts/health_check.py || exit 1
+
+# Security: Use tini as init system (handles signals properly)
+ENTRYPOINT ["tini", "--", "/usr/local/bin/entrypoint.sh"]
+
+# Security: Run as non-root user
+USER smartarb:smartarb
+
+# Security: Set working directory
+WORKDIR /app
+
+# Default command
+CMD ["python", "-m", "src.core.engine"]
+
+# Security: Add build-time security metadata
+ARG BUILD_DATE
+ARG VCS_REF
+ARG VERSION
+
+LABEL org.label-schema.build-date=$BUILD_DATE \
+      org.label-schema.vcs-ref=$VCS_REF \
+      org.label-schema.version=$VERSION \
+      org.label-schema.schema-version="1.0" \
+      security.scan-date=$BUILD_DATE \
+      security.non-root-user="smartarb:1001" \
+      security.capabilities-dropped="ALL"

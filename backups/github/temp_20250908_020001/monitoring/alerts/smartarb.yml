@@ -1,0 +1,389 @@
+# SmartArb Engine - Prometheus Alert Rules
+# Comprehensive alerting for cryptocurrency arbitrage trading bot
+# Covers application, system, and trading-specific alerts
+
+groups:
+  # =============================================================================
+  # APPLICATION HEALTH ALERTS
+  # =============================================================================
+  - name: smartarb.application
+    interval: 30s
+    rules:
+      - alert: SmartArbEngineDown
+        expr: up{job="smartarb-engine"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: application
+        annotations:
+          summary: "SmartArb Engine is down"
+          description: "SmartArb Engine has been down for more than 1 minute"
+          runbook_url: "https://docs.smartarb.dev/alerts/engine-down"
+
+      - alert: SmartArbEngineHighErrorRate
+        expr: rate(smartarb_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: application
+        annotations:
+          summary: "High error rate detected in SmartArb Engine"
+          description: "Error rate is {{ $value }} errors per second over the last 5 minutes"
+          runbook_url: "https://docs.smartarb.dev/alerts/high-error-rate"
+
+      - alert: SmartArbEngineHealthCheckFailing
+        expr: smartarb_health_check_status != 1
+        for: 2m
+        labels:
+          severity: warning
+          component: health
+        annotations:
+          summary: "SmartArb Engine health check failing"
+          description: "Health check has been failing for more than 2 minutes"
+
+      - alert: SmartArbEngineMemoryUsage
+        expr: (smartarb_memory_usage_bytes / smartarb_memory_limit_bytes) * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+          component: resources
+        annotations:
+          summary: "High memory usage in SmartArb Engine"
+          description: "Memory usage is {{ $value }}% of the limit"
+
+  # =============================================================================
+  # TRADING ALERTS
+  # =============================================================================
+  - name: smartarb.trading
+    interval: 15s
+    rules:
+      - alert: TradingEngineDown
+        expr: smartarb_trading_engine_status != 1
+        for: 30s
+        labels:
+          severity: critical
+          component: trading
+        annotations:
+          summary: "Trading engine is not running"
+          description: "Trading engine has been down for more than 30 seconds"
+          runbook_url: "https://docs.smartarb.dev/alerts/trading-down"
+
+      - alert: NoArbitrageOpportunities
+        expr: rate(smartarb_opportunities_found_total[30m]) == 0
+        for: 30m
+        labels:
+          severity: warning
+          component: trading
+        annotations:
+          summary: "No arbitrage opportunities found"
+          description: "No arbitrage opportunities have been detected in the last 30 minutes"
+
+      - alert: HighTradingFailureRate
+        expr: (rate(smartarb_trades_failed_total[10m]) / rate(smartarb_trades_attempted_total[10m])) * 100 > 20
+        for: 10m
+        labels:
+          severity: warning
+          component: trading
+        annotations:
+          summary: "High trading failure rate"
+          description: "Trading failure rate is {{ $value }}% over the last 10 minutes"
+
+      - alert: DailyLossLimitApproached
+        expr: smartarb_daily_loss_usd > (smartarb_daily_loss_limit_usd * 0.8)
+        for: 1m
+        labels:
+          severity: warning
+          component: risk
+        annotations:
+          summary: "Daily loss limit approaching"
+          description: "Daily loss (${{ $value }}) is approaching the limit"
+
+      - alert: DailyLossLimitExceeded
+        expr: smartarb_daily_loss_usd >= smartarb_daily_loss_limit_usd
+        for: 0s
+        labels:
+          severity: critical
+          component: risk
+        annotations:
+          summary: "Daily loss limit exceeded"
+          description: "Daily loss limit has been exceeded: ${{ $value }}"
+          runbook_url: "https://docs.smartarb.dev/alerts/loss-limit-exceeded"
+
+      - alert: LowAccountBalance
+        expr: smartarb_account_balance_usd < 100
+        for: 5m
+        labels:
+          severity: warning
+          component: funds
+        annotations:
+          summary: "Low account balance detected"
+          description: "Account balance is only ${{ $value }}"
+
+      - alert: ExchangeConnectionLost
+        expr: smartarb_exchange_connection_status == 0
+        for: 1m
+        labels:
+          severity: warning
+          component: connectivity
+        annotations:
+          summary: "Exchange connection lost"
+          description: "Connection to {{ $labels.exchange }} has been lost for more than 1 minute"
+
+  # =============================================================================
+  # SYSTEM RESOURCE ALERTS
+  # =============================================================================
+  - name: smartarb.system
+    interval: 30s
+    rules:
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 10m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value }}% for more than 10 minutes"
+
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 90
+        for: 5m
+        labels:
+          severity: critical
+          component: system
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value }}%"
+
+      - alert: LowDiskSpace
+        expr: (1 - (node_filesystem_avail_bytes{fstype!="tmpfs"} / node_filesystem_size_bytes{fstype!="tmpfs"})) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Disk usage is {{ $value }}% on {{ $labels.mountpoint }}"
+
+      - alert: HighIOWait
+        expr: rate(node_cpu_seconds_total{mode="iowait"}[5m]) * 100 > 20
+        for: 10m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High I/O wait time"
+          description: "I/O wait time is {{ $value }}% on {{ $labels.instance }}"
+
+  # =============================================================================
+  # RASPBERRY PI SPECIFIC ALERTS
+  # =============================================================================
+  - name: smartarb.raspberry_pi
+    interval: 30s
+    rules:
+      - alert: RaspberryPiHighTemperature
+        expr: node_hwmon_temp_celsius > 70
+        for: 5m
+        labels:
+          severity: warning
+          component: hardware
+        annotations:
+          summary: "Raspberry Pi temperature is high"
+          description: "CPU temperature is {{ $value }}°C"
+
+      - alert: RaspberryPiCriticalTemperature
+        expr: node_hwmon_temp_celsius > 80
+        for: 1m
+        labels:
+          severity: critical
+          component: hardware
+        annotations:
+          summary: "Raspberry Pi temperature critical"
+          description: "CPU temperature is {{ $value }}°C - risk of throttling"
+          runbook_url: "https://docs.smartarb.dev/alerts/rpi-overheating"
+
+      - alert: RaspberryPiThrottling
+        expr: node_rpi_throttled > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: hardware
+        annotations:
+          summary: "Raspberry Pi throttling detected"
+          description: "Raspberry Pi is being throttled ({{ $value }})"
+
+      - alert: RaspberryPiUndervoltage
+        expr: node_rpi_undervoltage > 0
+        for: 2m
+        labels:
+          severity: warning
+          component: power
+        annotations:
+          summary: "Raspberry Pi undervoltage detected"
+          description: "Undervoltage condition detected - check power supply"
+
+  # =============================================================================
+  # DATABASE ALERTS
+  # =============================================================================
+  - name: smartarb.database
+    interval: 60s
+    rules:
+      - alert: PostgreSQLDown
+        expr: up{job="postgres-exporter"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "PostgreSQL database is not responding"
+          runbook_url: "https://docs.smartarb.dev/alerts/postgres-down"
+
+      - alert: PostgreSQLHighConnections
+        expr: (pg_stat_database_numbackends / pg_settings_max_connections) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "PostgreSQL high connection usage"
+          description: "Connection usage is {{ $value }}%"
+
+      - alert: PostgreSQLSlowQueries
+        expr: avg_over_time(pg_stat_statements_mean_time_ms[5m]) > 1000
+        for: 10m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "PostgreSQL slow queries detected"
+          description: "Average query time is {{ $value }}ms"
+
+      - alert: RedisDown
+        expr: up{job="redis-exporter"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: cache
+        annotations:
+          summary: "Redis is down"
+          description: "Redis cache is not responding"
+          runbook_url: "https://docs.smartarb.dev/alerts/redis-down"
+
+      - alert: RedisHighMemoryUsage
+        expr: (redis_memory_used_bytes / redis_memory_max_bytes) * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+          component: cache
+        annotations:
+          summary: "Redis high memory usage"
+          description: "Redis memory usage is {{ $value }}%"
+
+  # =============================================================================
+  # EXTERNAL SERVICE ALERTS
+  # =============================================================================
+  - name: smartarb.external
+    interval: 60s
+    rules:
+      - alert: ExchangeAPIDown
+        expr: probe_success{job="blackbox-http"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: external
+        annotations:
+          summary: "Exchange API is down"
+          description: "{{ $labels.instance }} is not responding to health checks"
+
+      - alert: SlowExchangeAPIResponse
+        expr: probe_duration_seconds{job="blackbox-http"} > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: external
+        annotations:
+          summary: "Slow exchange API response"
+          description: "{{ $labels.instance }} is responding slowly ({{ $value }}s)"
+
+      - alert: ClaudeAPIDown
+        expr: probe_success{job="blackbox-http", instance="https://api.anthropic.com/health"} == 0
+        for: 10m
+        labels:
+          severity: warning
+          component: ai
+        annotations:
+          summary: "Claude API is not accessible"
+          description: "Cannot reach Claude API for AI features"
+
+  # =============================================================================
+  # AI SYSTEM ALERTS
+  # =============================================================================
+  - name: smartarb.ai
+    interval: 300s  # Check every 5 minutes
+    rules:
+      - alert: AIAnalysisFailure
+        expr: rate(smartarb_ai_analysis_failures_total[1h]) > 0.1
+        for: 30m
+        labels:
+          severity: warning
+          component: ai
+        annotations:
+          summary: "AI analysis failures detected"
+          description: "AI analysis failure rate is {{ $value }} per second"
+
+      - alert: AIRecommendationQualityLow
+        expr: smartarb_ai_recommendation_confidence < 0.7
+        for: 1h
+        labels:
+          severity: warning
+          component: ai
+        annotations:
+          summary: "Low AI recommendation confidence"
+          description: "AI recommendation confidence is only {{ $value }}"
+
+      - alert: NoAIAnalysisRecently
+        expr: time() - smartarb_ai_last_analysis_timestamp > 86400
+        for: 1h
+        labels:
+          severity: warning
+          component: ai
+        annotations:
+          summary: "No recent AI analysis"
+          description: "No AI analysis has been performed in the last 24 hours"
+
+  # =============================================================================
+  # SECURITY ALERTS
+  # =============================================================================
+  - name: smartarb.security
+    interval: 60s
+    rules:
+      - alert: HighFailedAuthAttempts
+        expr: rate(nginx_http_requests_total{status=~"4[0-9][0-9]"}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: "High number of failed authentication attempts"
+          description: "{{ $value }} failed requests per second"
+
+      - alert: UnusualTrafficPattern
+        expr: rate(nginx_http_requests_total[5m]) > 10
+        for: 10m
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: "Unusual traffic pattern detected"
+          description: "Request rate is {{ $value }} requests per second"
+
+      - alert: ConfigurationChanged
+        expr: increase(smartarb_config_changes_total[15m]) > 0
+        for: 0s
+        labels:
+          severity: info
+          component: security
+        annotations:
+          summary: "Configuration change detected"
+          description: "SmartArb Engine configuration has been modified"

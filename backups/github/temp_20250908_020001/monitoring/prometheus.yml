@@ -1,0 +1,241 @@
+# SmartArb Engine - Prometheus Configuration
+# Comprehensive monitoring configuration for cryptocurrency arbitrage trading bot
+# Optimized for Raspberry Pi 5 deployment
+
+# =============================================================================
+# GLOBAL CONFIGURATION
+# =============================================================================
+global:
+  scrape_interval: 15s          # How frequently to scrape targets
+  evaluation_interval: 15s      # How frequently to evaluate rules
+  scrape_timeout: 10s          # How long until a scrape request times out
+  
+  # Labels attached to all metrics
+  external_labels:
+    monitor: 'smartarb-engine'
+    environment: 'production'
+    instance_type: 'raspberry-pi'
+
+# =============================================================================
+# ALERTMANAGER CONFIGURATION
+# =============================================================================
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+      timeout: 10s
+      path_prefix: /
+      scheme: http
+
+# =============================================================================
+# RULE FILES
+# =============================================================================
+rule_files:
+  - "rules/*.yml"
+  - "alerts/*.yml"
+
+# =============================================================================
+# SCRAPE CONFIGURATIONS
+# =============================================================================
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 30s
+    metrics_path: /metrics
+    
+  # SmartArb Engine - Main Application
+  - job_name: 'smartarb-engine'
+    static_configs:
+      - targets: ['smartarb-engine:8000']
+    scrape_interval: 15s
+    metrics_path: /metrics
+    scrape_timeout: 10s
+    honor_labels: true
+    params:
+      format: ['prometheus']
+    
+    # Additional labels
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: smartarb-engine:8000
+    
+    # Metric relabeling
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'smartarb_.*'
+        target_label: app
+        replacement: 'smartarb-engine'
+
+  # Node Exporter - System Metrics
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 15s
+    metrics_path: /metrics
+    
+    # Raspberry Pi specific relabeling
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: '(.+)'
+        replacement: 'raspberry-pi-${1}'
+
+  # PostgreSQL Exporter - Database Metrics
+  - job_name: 'postgres-exporter'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+    scrape_interval: 30s
+    metrics_path: /metrics
+    scrape_timeout: 10s
+
+  # Redis Exporter - Cache Metrics
+  - job_name: 'redis-exporter'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # NGINX Exporter - Web Server Metrics
+  - job_name: 'nginx-exporter'
+    static_configs:
+      - targets: ['nginx-exporter:9113']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # cAdvisor - Container Metrics (if using Docker)
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+    scrape_interval: 30s
+    metrics_path: /metrics
+    honor_labels: true
+    
+    # Container-specific relabeling
+    relabel_configs:
+      - source_labels: [__meta_container_name]
+        target_label: container_name
+      - source_labels: [__meta_container_label_com_docker_compose_service]
+        target_label: service
+
+  # Blackbox Exporter - External Service Monitoring
+  - job_name: 'blackbox-http'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]  # Look for a HTTP 200 response
+    static_configs:
+      - targets:
+        - https://api.kraken.com/0/public/SystemStatus
+        - https://api.bybit.com/v2/public/time
+        - https://api.mexc.com/api/v3/ping
+        - https://api.anthropic.com/health  # Claude API health
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # Blackbox Exporter - TCP Connectivity
+  - job_name: 'blackbox-tcp'
+    metrics_path: /probe
+    params:
+      module: [tcp_connect]
+    static_configs:
+      - targets:
+        - postgres:5432
+        - redis:6379
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # SmartArb Engine - Custom Metrics Endpoints
+  - job_name: 'smartarb-trading'
+    static_configs:
+      - targets: ['smartarb-engine:8000']
+    scrape_interval: 5s  # More frequent for trading metrics
+    metrics_path: /metrics/trading
+    scrape_timeout: 5s
+    honor_timestamps: true
+
+  - job_name: 'smartarb-exchanges'
+    static_configs:
+      - targets: ['smartarb-engine:8000']
+    scrape_interval: 10s
+    metrics_path: /metrics/exchanges
+    scrape_timeout: 8s
+
+  - job_name: 'smartarb-ai'
+    static_configs:
+      - targets: ['smartarb-engine:8000']
+    scrape_interval: 60s  # AI metrics less frequent
+    metrics_path: /metrics/ai
+    scrape_timeout: 15s
+
+  # Push Gateway - For batch jobs and one-off scripts
+  - job_name: 'pushgateway'
+    static_configs:
+      - targets: ['pushgateway:9091']
+    scrape_interval: 30s
+    honor_labels: true
+
+# =============================================================================
+# STORAGE CONFIGURATION
+# =============================================================================
+storage:
+  tsdb:
+    # Retention settings optimized for Raspberry Pi
+    retention.time: 15d        # Keep 15 days of data
+    retention.size: 2GB        # Max 2GB storage
+    
+    # Compaction settings
+    min-block-duration: 2h
+    max-block-duration: 25h
+    
+    # Performance settings for RPi
+    wal-compression: true
+    wal-segment-size: 32MB
+    
+    # Memory optimization
+    head-chunks-write-queue-size: 1000
+    
+# =============================================================================
+# REMOTE WRITE (Optional - for long-term storage)
+# =============================================================================
+# Uncomment and configure for external storage like Grafana Cloud
+# remote_write:
+#   - url: "https://prometheus-prod-01-eu-west-0.grafana.net/api/prom/push"
+#     basic_auth:
+#       username: "your_instance_id"
+#       password: "your_grafana_api_key"
+#     write_relabel_configs:
+#       - source_labels: [__name__]
+#         regex: 'smartarb_.*|node_.*|postgres_.*'
+#         action: keep
+
+# =============================================================================
+# QUERY CONFIGURATION
+# =============================================================================
+query:
+  # Timeout for queries
+  timeout: 2m
+  
+  # Maximum number of samples returned
+  max_samples: 50000000
+  
+  # Maximum concurrent queries
+  max_concurrency: 20
+  
+  # Lookback delta for instant queries
+  lookback-delta: 5m

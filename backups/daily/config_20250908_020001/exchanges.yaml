@@ -1,0 +1,165 @@
+# Exchange Configurations for SmartArb Engine
+
+exchanges:
+  kraken:
+    enabled: true
+    name: "Kraken"
+    api_key: "${KRAKEN_API_KEY}"
+    api_secret: "${KRAKEN_API_SECRET}"
+    sandbox: false
+    
+    # API configuration
+    base_url: "https://api.kraken.com"
+    rate_limit: 15              # calls per second
+    timeout: 30                 # seconds
+    
+    # Trading configuration
+    supports_margin: false      # Start with spot only
+    min_order_size: 10          # USDT equivalent
+    max_order_size: 100000      # USDT equivalent
+    
+    # Fees (updated dynamically)
+    maker_fee: 0.0016          # 0.16%
+    taker_fee: 0.0026          # 0.26%
+    withdrawal_fees:
+      BTC: 0.00015
+      ETH: 0.0025
+      USDT: 5.0
+    
+    # Market data
+    websocket_url: "wss://ws.kraken.com"
+    supports_orderbook_ws: true
+    supports_trades_ws: true
+    
+    # Supported pairs
+    trading_pairs:
+      - "BTC/USDT"
+      - "ETH/USDT" 
+      - "ADA/USDT"
+      - "DOT/USDT"
+      - "LINK/USDT"
+      - "MATIC/USDT"
+
+  bybit:
+    enabled: true
+    name: "Bybit"
+    api_key: "${BYBIT_API_KEY}"
+    api_secret: "${BYBIT_API_SECRET}"
+    sandbox: false
+    
+    # API configuration
+    base_url: "https://api.bybit.com"
+    rate_limit: 120             # calls per minute (2 per second)
+    timeout: 10                 # seconds
+    
+    # Trading configuration
+    supports_margin: true       # Future implementation
+    min_order_size: 1           # USDT equivalent
+    max_order_size: 500000      # USDT equivalent
+    
+    # Fees
+    maker_fee: 0.001           # 0.10%
+    taker_fee: 0.001           # 0.10%
+    withdrawal_fees:
+      BTC: 0.0005
+      ETH: 0.01
+      USDT: 1.0
+    
+    # Market data
+    websocket_url: "wss://stream.bybit.com/v5/public/spot"
+    supports_orderbook_ws: true
+    supports_trades_ws: true
+    
+    # Supported pairs
+    trading_pairs:
+      - "BTC/USDT"
+      - "ETH/USDT"
+      - "BNB/USDT"
+      - "ADA/USDT"
+      - "DOT/USDT"
+      - "LINK/USDT"
+      - "MATIC/USDT"
+
+  mexc:
+    enabled: true
+    name: "MEXC"
+    api_key: "${MEXC_API_KEY}"
+    api_secret: "${MEXC_API_SECRET}"
+    sandbox: false
+    
+    # API configuration
+    base_url: "https://api.mexc.com"
+    rate_limit: 20              # calls per second
+    timeout: 15                 # seconds
+    
+    # Trading configuration
+    supports_margin: false      # Spot only for now
+    min_order_size: 5           # USDT equivalent
+    max_order_size: 200000      # USDT equivalent
+    
+    # Fees
+    maker_fee: 0.002           # 0.20%
+    taker_fee: 0.002           # 0.20%
+    withdrawal_fees:
+      BTC: 0.0004
+      ETH: 0.008
+      USDT: 2.0
+    
+    # Market data
+    websocket_url: "wss://wbs.mexc.com/ws"
+    supports_orderbook_ws: true
+    supports_trades_ws: true
+    
+    # Supported pairs
+    trading_pairs:
+      - "BTC/USDT"
+      - "ETH/USDT"
+      - "BNB/USDT"
+      - "ADA/USDT"
+      - "DOT/USDT"
+      - "LINK/USDT"
+      - "MATIC/USDT"
+
+# Global exchange settings
+global_settings:
+  # Connection settings
+  max_retries: 3
+  retry_delay: 1               # seconds
+  connection_timeout: 30       # seconds
+  
+  # Data refresh rates
+  orderbook_refresh: 1         # seconds
+  ticker_refresh: 5            # seconds
+  balance_refresh: 30          # seconds
+  
+  # Emergency settings
+  emergency_stop_all: false
+  maintenance_mode: false
+  
+  # Failover configuration
+  failover:
+    enabled: true
+    max_failed_requests: 10
+    cooldown_period: 300       # 5 minutes
+    
+# Exchange-specific arbitrage settings
+arbitrage_settings:
+  # Preferred exchange pairs for arbitrage
+  preferred_pairs:
+    - exchanges: ["kraken", "bybit"]
+      priority: 1
+      reason: "Good liquidity, reliable APIs"
+      
+    - exchanges: ["bybit", "mexc"] 
+      priority: 2
+      reason: "Higher spreads potential"
+      
+    - exchanges: ["kraken", "mexc"]
+      priority: 3
+      reason: "Regional differences"
+  
+  # Minimum spread requirements by exchange pair
+  min_spreads:
+    kraken_bybit: 0.20         # %
+    bybit_mexc: 0.25           # %
+    kraken_mexc: 0.30          # %

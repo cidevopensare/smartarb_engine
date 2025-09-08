@@ -1,0 +1,286 @@
+# SmartArb Engine Strategy Configurations
+
+# Complete strategy settings for all trading algorithms
+
+strategies:
+
+# =============================================================================
+
+# SPATIAL ARBITRAGE STRATEGY
+
+# =============================================================================
+
+spatial_arbitrage:
+enabled: true
+priority: 1
+
+```
+# Basic strategy parameters
+min_spread_percent: 0.20          # Minimum 0.20% spread required
+max_position_size: 1000           # Maximum $1000 per trade
+confidence_threshold: 0.7         # Minimum confidence level (0-1)
+max_slippage_percent: 0.10        # Maximum 0.10% slippage allowed
+
+# Exchange pair preferences (in order of priority)
+preferred_pairs:
+  - exchanges: ["kraken", "bybit"]
+    priority: 1
+    min_spread: 0.20
+    reason: "High liquidity, reliable execution"
+    
+  - exchanges: ["bybit", "mexc"]
+    priority: 2  
+    min_spread: 0.25
+    reason: "Good spread opportunities"
+    
+  - exchanges: ["kraken", "mexc"]
+    priority: 3
+    min_spread: 0.30
+    reason: "Regional price differences"
+
+# Trading pairs to monitor
+trading_pairs:
+  - symbol: "BTC/USDT"
+    enabled: true
+    min_spread: 0.15
+    max_position: 500
+    priority: 1
+    
+  - symbol: "ETH/USDT"
+    enabled: true
+    min_spread: 0.20
+    max_position: 800
+    priority: 2
+    
+  - symbol: "ADA/USDT"
+    enabled: true
+    min_spread: 0.25
+    max_position: 300
+    priority: 3
+    
+  - symbol: "DOT/USDT"
+    enabled: true
+    min_spread: 0.25
+    max_position: 300
+    priority: 4
+    
+  - symbol: "LINK/USDT"
+    enabled: true
+    min_spread: 0.25
+    max_position: 300
+    priority: 5
+    
+  - symbol: "MATIC/USDT"
+    enabled: true
+    min_spread: 0.30
+    max_position: 200
+    priority: 6
+
+# Timing and frequency settings
+scan_frequency: 5                 # Scan every 5 seconds
+opportunity_timeout: 30           # Opportunities expire after 30 seconds
+execution_timeout: 15             # Max 15 seconds execution time
+
+# Risk management
+max_risk_score: 0.8              # Maximum risk score allowed
+min_confidence_level: 0.7        # Minimum confidence required
+stop_loss_percent: -2.0          # 2% stop loss
+
+# Volume and liquidity requirements
+min_volume_24h: 1000000          # Minimum $1M 24h volume
+min_order_book_depth: 50000      # Minimum $50k order book depth
+max_volume_participation: 0.05   # Max 5% of order book
+
+# Advanced settings
+correlation_threshold: 0.8        # Price correlation threshold
+market_impact_limit: 0.02        # Max 2% market impact
+
+# Performance tracking
+track_performance: true
+performance_window: 1440          # 24 hours in minutes
+
+# Notifications
+notify_opportunities: true
+notify_executions: true
+notify_errors: true
+```
+
+# =============================================================================
+
+# TRIANGULAR ARBITRAGE STRATEGY (Future Implementation)
+
+# =============================================================================
+
+triangular_arbitrage:
+enabled: false                    # Disabled for initial deployment
+priority: 2
+
+```
+# Strategy parameters
+min_profit_percent: 0.30          # Minimum 0.30% profit required
+max_position_size: 500            # Maximum $500 per trade
+confidence_threshold: 0.8         # Higher confidence required
+
+# Currency triangles to monitor
+currency_triangles:
+  - base: "BTC"
+    quote: "USDT"
+    intermediate: "ETH"
+    enabled: true
+    
+  - base: "ETH"
+    quote: "USDT"
+    intermediate: "BNB"
+    enabled: false
+
+# Execution settings
+max_execution_time: 10            # Faster execution required
+simultaneous_orders: true         # Execute all orders simultaneously
+
+# Risk settings
+max_risk_score: 0.6              # Lower risk tolerance
+slippage_tolerance: 0.05         # 0.05% slippage tolerance
+```
+
+# =============================================================================
+
+# STATISTICAL ARBITRAGE STRATEGY (Future Implementation)
+
+# =============================================================================
+
+statistical_arbitrage:
+enabled: false                    # Disabled for initial deployment
+priority: 3
+
+```
+# Strategy parameters
+lookback_period: 1440             # 24 hours lookback
+z_score_threshold: 2.0            # Entry threshold
+profit_target: 0.5                # 0.5% profit target
+stop_loss: -0.3                   # 0.3% stop loss
+
+# Pairs for statistical analysis
+pairs:
+  - pair: ["BTC/USDT", "ETH/USDT"]
+    enabled: false
+    correlation_window: 720        # 12 hours
+    
+  - pair: ["ETH/USDT", "BNB/USDT"] 
+    enabled: false
+    correlation_window: 720
+```
+
+# =============================================================================
+
+# GLOBAL STRATEGY SETTINGS
+
+# =============================================================================
+
+global_settings:
+
+# Execution preferences
+
+execution_mode: “parallel”          # parallel, sequential, adaptive
+max_concurrent_strategies: 2        # Max strategies running simultaneously
+strategy_cooldown: 60               # Seconds between strategy executions
+
+# Risk management
+
+global_max_exposure: 2000           # Max $2000 total exposure
+strategy_correlation_limit: 0.7     # Max correlation between active strategies
+
+# Performance requirements
+
+min_sharpe_ratio: 1.0               # Minimum Sharpe ratio
+max_drawdown: -5.0                  # Maximum 5% drawdown
+
+# Data requirements
+
+min_data_quality: 0.9               # Minimum data quality score
+max_data_age: 10                    # Max 10 seconds old data
+
+# Emergency controls
+
+emergency_stop_loss: -50            # Emergency stop at $50 loss
+panic_mode_enabled: true            # Enable panic mode
+
+# =============================================================================
+
+# STRATEGY MONITORING AND ALERTS
+
+# =============================================================================
+
+monitoring:
+
+# Performance tracking
+
+track_all_strategies: true
+performance_alerts: true
+
+# Alert thresholds
+
+alert_thresholds:
+low_performance: 0.5              # Alert if success rate < 50%
+high_drawdown: -2.0               # Alert if drawdown > 2%
+execution_delays: 5.0             # Alert if execution > 5 seconds
+
+# Reporting
+
+daily_reports: true
+weekly_analysis: true
+
+# =============================================================================
+
+# BACKTESTING CONFIGURATION (Future Feature)
+
+# =============================================================================
+
+backtesting:
+enabled: false
+
+# Historical data
+
+data_sources: [“exchange_historical”, “market_data_api”]
+backtest_period: “30d”              # 30 days
+
+# Test parameters
+
+initial_capital: 1000               # $1000 starting capital
+commission_rate: 0.001              # 0.1% commission
+slippage_model: “linear”            # linear, impact, fixed
+
+# Analysis
+
+metrics:
+- “total_return”
+- “sharpe_ratio”
+- “max_drawdown”
+- “win_rate”
+- “avg_trade_duration”
+
+# =============================================================================
+
+# PAPER TRADING SETTINGS
+
+# =============================================================================
+
+paper_trading:
+enabled: true                       # Start with paper trading
+
+# Simulation parameters
+
+starting_balance: 10000             # $10,000 virtual balance
+realistic_slippage: true            # Simulate realistic slippage
+realistic_fees: true                # Include exchange fees
+latency_simulation: true            # Simulate network latency
+
+# Market impact simulation
+
+simulate_market_impact: true
+impact_factor: 0.001                # 0.1% impact per $1000 traded
+
+# Reporting
+
+detailed_logs: true
+performance_tracking: true
+daily_summary: true

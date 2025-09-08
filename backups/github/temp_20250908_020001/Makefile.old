@@ -1,0 +1,727 @@
+
+# SmartArb Engine - Complete Makefile
+# Comprehensive automation for development, testing, and production deployment
+# Optimized for Raspberry Pi 5 and cross-platform compatibility
+
+# =============================================================================
+# PROJECT CONFIGURATION
+# =============================================================================
+PROJECT_NAME := smartarb-engine
+VERSION := $(shell grep -o '"version": "[^"]*' package.json 2>/dev/null | cut -d'"' -f4 || echo "1.0.0")
+PYTHON := python3
+PIP := pip3
+VENV_DIR := venv
+VENV_BIN := $(VENV_DIR)/bin
+PYTHON_VENV := $(VENV_BIN)/python
+PIP_VENV := $(VENV_BIN)/pip
+
+# Docker configuration
+DOCKER_IMAGE := $(PROJECT_NAME)
+DOCKER_TAG := latest
+DOCKER_REGISTRY := # Add your registry here
+
+# Colors for terminal output
+NC := \033[0m
+RED := \033[0;31m
+GREEN := \033[0;32m
+YELLOW := \033[1;33m
+BLUE := \033[0;34m
+PURPLE := \033[0;35m
+CYAN := \033[0;36m
+WHITE := \033[1;37m
+
+# Platform detection
+UNAME_S := $(shell uname -s)
+UNAME_M := $(shell uname -m)
+IS_RPI := $(shell [ -f /proc/cpuinfo ] && grep -q "BCM" /proc/cpuinfo && echo "true" || echo "false")
+IS_DOCKER := $(shell [ -f /.dockerenv ] && echo "true" || echo "false")
+
+# Default target
+.DEFAULT_GOAL := help
+
+# =============================================================================
+# HELP AND INFORMATION
+# =============================================================================
+.PHONY: help
+help: ## Show this help message
+	@echo "$(CYAN)SmartArb Engine - Makefile Commands$(NC)"
+	@echo "$(CYAN)=====================================$(NC)"
+	@echo ""
+	@echo "$(GREEN)Project: $(PROJECT_NAME) v$(VERSION)$(NC)"
+	@echo "$(GREEN)Platform: $(UNAME_S) $(UNAME_M)$(NC)"
+	@echo "$(GREEN)Raspberry Pi: $(IS_RPI)$(NC)"
+	@echo "$(GREEN)Docker: $(IS_DOCKER)$(NC)"
+	@echo ""
+	@echo "$(YELLOW)Available commands:$(NC)"
+	@awk 'BEGIN {FS = ":.*##"; printf "\n"} /^[a-zA-Z0-9_-]+:.*?##/ { printf "  $(CYAN)%-20s$(NC) %s\n", $$1, $$2 } /^##@/ { printf "\n$(YELLOW)%s$(NC)\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
+
+.PHONY: info
+info: ## Show system information
+	@echo "$(BLUE)System Information:$(NC)"
+	@echo "  OS: $(UNAME_S)"
+	@echo "  Architecture: $(UNAME_M)"
+	@echo "  Raspberry Pi: $(IS_RPI)"
+	@echo "  Docker: $(IS_DOCKER)"
+	@echo "  Python: $(shell $(PYTHON) --version 2>/dev/null || echo 'Not found')"
+	@echo "  Git: $(shell git --version 2>/dev/null || echo 'Not found')"
+	@echo "  Docker: $(shell docker --version 2>/dev/null || echo 'Not found')"
+	@echo "  Make: $(MAKE_VERSION)"
+	@echo ""
+	@echo "$(BLUE)Project Information:$(NC)"
+	@echo "  Name: $(PROJECT_NAME)"
+	@echo "  Version: $(VERSION)"
+	@echo "  Virtual Environment: $(VENV_DIR)"
+	@echo "  Python in venv: $(shell [ -f $(PYTHON_VENV) ] && $(PYTHON_VENV) --version || echo 'Not found')"
+
+##@ 🚀 Quick Start
+.PHONY: quick-start
+quick-start: setup install test-basic health-check ## Complete quick setup and test
+	@echo "$(GREEN)✅ SmartArb Engine ready to use!$(NC)"
+	@echo "$(YELLOW)Next steps:$(NC)"
+	@echo "  1. Edit configuration: $(CYAN)make edit-config$(NC)"
+	@echo "  2. Generate secrets: $(CYAN)make secrets$(NC)"
+	@echo "  3. Start application: $(CYAN)make run$(NC)"
+
+##@ 🛠️ Setup and Installation
+.PHONY: setup
+setup: check-system install-system setup-venv install-deps create-dirs setup-git-hooks ## Complete setup from scratch
+	@echo "$(GREEN)✅ Setup completed successfully!$(NC)"
+
+.PHONY: check-system
+check-system: ## Check system prerequisites
+	@echo "$(BLUE)Checking system prerequisites...$(NC)"
+	@echo "Python 3.11+: $(shell $(PYTHON) --version | grep -q "Python 3.1[1-9]" && echo "$(GREEN)✓$(NC)" || echo "$(RED)✗$(NC)")"
+	@echo "Git: $(shell command -v git >/dev/null 2>&1 && echo "$(GREEN)✓$(NC)" || echo "$(RED)✗$(NC)")"
+	@echo "Make: $(shell command -v make >/dev/null 2>&1 && echo "$(GREEN)✓$(NC)" || echo "$(RED)✗$(NC)")"
+	@echo "Curl: $(shell command -v curl >/dev/null 2>&1 && echo "$(GREEN)✓$(NC)" || echo "$(RED)✗$(NC)")"
+	@if [ "$(IS_RPI)" = "true" ]; then \
+		echo "$(YELLOW)Raspberry Pi detected - checking RPi-specific tools...$(NC)"; \
+		echo "vcgencmd: $(shell command -v vcgencmd >/dev/null 2>&1 && echo "$(GREEN)✓$(NC)" || echo "$(RED)✗$(NC)")"; \
+		echo "GPIO access: $(shell [ -w /dev/gpiomem ] && echo "$(GREEN)✓$(NC)" || echo "$(YELLOW)⚠$(NC)")"; \
+	fi
+
+.PHONY: install-system
+install-system: ## Install system dependencies (requires sudo)
+	@echo "$(BLUE)Installing system dependencies...$(NC)"
+	@if [ "$(UNAME_S)" = "Linux" ]; then \
+		if command -v apt >/dev/null 2>&1; then \
+			sudo apt update && sudo apt install -y \
+				python3-dev python3-pip python3-venv \
+				build-essential pkg-config \
+				libpq-dev libssl-dev libffi-dev \
+				git curl wget htop vim; \
+		elif command -v yum >/dev/null 2>&1; then \
+			sudo yum install -y python3-devel python3-pip \
+				gcc gcc-c++ make pkgconfig \
+				postgresql-devel openssl-devel libffi-devel \
+				git curl wget htop vim; \
+		fi; \
+	elif [ "$(UNAME_S)" = "Darwin" ]; then \
+		if command -v brew >/dev/null 2>&1; then \
+			brew install python@3.11 postgresql openssl libffi git; \
+		fi; \
+	fi
+
+.PHONY: setup-venv
+setup-venv: $(VENV_DIR)/bin/activate ## Create Python virtual environment
+
+$(VENV_DIR)/bin/activate:
+	@echo "$(BLUE)Creating Python virtual environment...$(NC)"
+	$(PYTHON) -m venv $(VENV_DIR)
+	$(PIP_VENV) install --upgrade pip setuptools wheel
+
+.PHONY: install-deps
+install-deps: setup-venv ## Install Python dependencies
+	@echo "$(BLUE)Installing Python dependencies...$(NC)"
+	@if [ -f requirements.txt ]; then \
+		$(PIP_VENV) install -r requirements.txt; \
+	else \
+		echo "$(RED)requirements.txt not found - installing basic dependencies...$(NC)"; \
+		$(PIP_VENV) install asyncio aiohttp asyncpg redis structlog pydantic psutil ccxt anthropic pytest; \
+	fi
+
+.PHONY: install-dev
+install-dev: setup-venv ## Install development dependencies
+	@echo "$(BLUE)Installing development dependencies...$(NC)"
+	$(PIP_VENV) install \
+		pytest pytest-asyncio pytest-mock pytest-cov pytest-benchmark \
+		black flake8 mypy isort pre-commit \
+		sphinx sphinx-rtd-theme \
+		memory-profiler line-profiler
+
+.PHONY: create-dirs
+create-dirs: ## Create necessary directories
+	@echo "$(BLUE)Creating project directories...$(NC)"
+	@mkdir -p logs data config secrets backups
+	@mkdir -p tests/unit tests/integration tests/e2e
+	@mkdir -p docs/api docs/user
+	@chmod 700 secrets
+	@echo "$(GREEN)✓ Directories created$(NC)"
+
+.PHONY: setup-git-hooks
+setup-git-hooks: ## Setup Git pre-commit hooks
+	@if [ -f .pre-commit-config.yaml ]; then \
+		echo "$(BLUE)Setting up Git hooks...$(NC)"; \
+		$(VENV_BIN)/pre-commit install; \
+		echo "$(GREEN)✓ Git hooks installed$(NC)"; \
+	else \
+		echo "$(YELLOW)⚠ .pre-commit-config.yaml not found - skipping Git hooks$(NC)"; \
+	fi
+
+##@ 🔧 Development
+.PHONY: install
+install: install-deps ## Install dependencies
+
+.PHONY: dev-install
+dev-install: install-dev setup-git-hooks ## Install development environment
+
+.PHONY: upgrade
+upgrade: setup-venv ## Upgrade all dependencies
+	@echo "$(BLUE)Upgrading dependencies...$(NC)"
+	$(PIP_VENV) install --upgrade pip setuptools wheel
+	@if [ -f requirements.txt ]; then \
+		$(PIP_VENV) install --upgrade -r requirements.txt; \
+	fi
+
+.PHONY: freeze
+freeze: ## Generate requirements.txt from current environment
+	@echo "$(BLUE)Generating requirements.txt...$(NC)"
+	$(PIP_VENV) freeze > requirements.txt
+	@echo "$(GREEN)✓ requirements.txt updated$(NC)"
+
+.PHONY: fix-imports
+fix-imports: setup-venv ## Fix missing imports automatically
+	@echo "$(BLUE)Fixing import issues...$(NC)"
+	$(PYTHON_VENV) scripts/fix_imports.py --verbose
+
+.PHONY: format
+format: setup-venv ## Format code with black and isort
+	@echo "$(BLUE)Formatting code...$(NC)"
+	$(VENV_BIN)/black src tests scripts --line-length 100
+	$(VENV_BIN)/isort src tests scripts --profile black
+
+.PHONY: lint
+lint: setup-venv ## Run linting checks
+	@echo "$(BLUE)Running linting checks...$(NC)"
+	$(VENV_BIN)/flake8 src tests scripts --max-line-length=100 --ignore=E203,W503
+	$(VENV_BIN)/mypy src --ignore-missing-imports
+
+.PHONY: quality
+quality: format lint ## Run all code quality checks
+	@echo "$(GREEN)✅ Code quality checks completed$(NC)"
+
+##@ 🧪 Testing
+.PHONY: test
+test: setup-venv ## Run all tests
+	@echo "$(BLUE)Running all tests...$(NC)"
+	$(PYTHON_VENV) -m pytest tests/ -v --tb=short
+
+.PHONY: test-basic
+test-basic: setup-venv ## Run basic smoke tests
+	@echo "$(BLUE)Running basic tests...$(NC)"
+	$(PYTHON_VENV) -m pytest tests/test_basic.py -v
+
+.PHONY: test-unit
+test-unit: setup-venv ## Run unit tests only
+	@echo "$(BLUE)Running unit tests...$(NC)"
+	$(PYTHON_VENV) -m pytest tests/unit/ -v
+
+.PHONY: test-integration
+test-integration: setup-venv ## Run integration tests
+	@echo "$(BLUE)Running integration tests...$(NC)"
+	$(PYTHON_VENV) -m pytest tests/integration/ -v
+
+.PHONY: test-e2e
+test-e2e: setup-venv ## Run end-to-end tests
+	@echo "$(BLUE)Running end-to-end tests...$(NC)"
+	$(PYTHON_VENV) -m pytest tests/e2e/ -v
+
+.PHONY: test-cov
+test-cov: setup-venv ## Run tests with coverage report
+	@echo "$(BLUE)Running tests with coverage...$(NC)"
+	$(PYTHON_VENV) -m pytest tests/ --cov=src --cov-report=html --cov-report=term-missing
+	@echo "$(GREEN)Coverage report generated: htmlcov/index.html$(NC)"
+
+.PHONY: test-watch
+test-watch: setup-venv ## Run tests in watch mode
+	@echo "$(BLUE)Running tests in watch mode...$(NC)"
+	$(PYTHON_VENV) -m pytest tests/ -v --tb=short --looponfail
+
+.PHONY: benchmark
+benchmark: setup-venv ## Run performance benchmarks
+	@echo "$(BLUE)Running performance benchmarks...$(NC)"
+	$(PYTHON_VENV) -m pytest tests/ -v --benchmark-only --benchmark-sort=mean
+
+##@ 🔐 Security and Secrets
+.PHONY: secrets
+secrets: setup-venv ## Generate all secrets and configurations
+	@echo "$(BLUE)Generating secrets...$(NC)"
+	$(PYTHON_VENV) scripts/generate_secrets.py --environment=development --generate-ssl --docker-env
+
+.PHONY: secrets-prod
+secrets-prod: setup-venv ## Generate production secrets
+	@echo "$(BLUE)Generating production secrets...$(NC)"
+	$(PYTHON_VENV) scripts/generate_secrets.py --environment=production --master-password --docker-env --k8s-secrets
+
+.PHONY: verify-secrets
+verify-secrets: setup-venv ## Verify all secrets exist
+	@echo "$(BLUE)Verifying secrets...$(NC)"
+	$(PYTHON_VENV) scripts/generate_secrets.py --verify
+
+.PHONY: rotate-secrets
+rotate-secrets: setup-venv ## Rotate database and Redis passwords
+	@echo "$(BLUE)Rotating secrets...$(NC)"
+	$(PYTHON_VENV) scripts/generate_secrets.py --rotate postgres_password redis_password app_secret_key
+
+.PHONY: security-scan
+security-scan: setup-venv ## Run security scans
+	@echo "$(BLUE)Running security scans...$(NC)"
+	$(VENV_BIN)/bandit -r src/ -f json -o security-report.json
+	@echo "$(GREEN)Security scan completed: security-report.json$(NC)"
+
+##@ 🗄️ Database
+.PHONY: db-setup
+db-setup: setup-venv ## Setup database
+	@echo "$(BLUE)Setting up database...$(NC)"
+	$(PYTHON_VENV) scripts/setup_database.py --create-db --run-migrations
+
+.PHONY: db-migrate
+db-migrate: setup-venv ## Run database migrations
+	@echo "$(BLUE)Running database migrations...$(NC)"
+	$(PYTHON_VENV) -m alembic upgrade head
+
+.PHONY: db-reset
+db-reset: setup-venv ## Reset database (destructive!)
+	@echo "$(RED)WARNING: This will destroy all data!$(NC)"
+	@read -p "Are you sure? (yes/no): " confirm && [ "$$confirm" = "yes" ]
+	$(PYTHON_VENV) scripts/setup_database.py --reset-db --run-migrations
+
+.PHONY: db-backup
+db-backup: ## Backup database
+	@echo "$(BLUE)Creating database backup...$(NC)"
+	@mkdir -p backups
+	@timestamp=$$(date +%Y%m%d_%H%M%S); \
+	pg_dump smartarb_dev > backups/smartarb_backup_$$timestamp.sql
+	@echo "$(GREEN)Backup created in backups/$(NC)"
+
+##@ 🏃‍♂️ Running the Application
+.PHONY: run
+run: setup-venv ## Run the application
+	@echo "$(BLUE)Starting SmartArb Engine...$(NC)"
+	$(PYTHON_VENV) -m src.core.engine
+
+.PHONY: run-dev
+run-dev: setup-venv ## Run in development mode
+	@echo "$(BLUE)Starting SmartArb Engine (development)...$(NC)"
+	ENVIRONMENT=development DEBUG_MODE=true $(PYTHON_VENV) -m src.core.engine
+
+.PHONY: run-paper
+run-paper: setup-venv ## Run in paper trading mode
+	@echo "$(BLUE)Starting SmartArb Engine (paper trading)...$(NC)"
+	TRADING_MODE=PAPER $(PYTHON_VENV) -m src.core.engine
+
+.PHONY: daemon
+daemon: setup-venv ## Run as daemon (background)
+	@echo "$(BLUE)Starting SmartArb Engine as daemon...$(NC)"
+	nohup $(PYTHON_VENV) -m src.core.engine > logs/smartarb.log 2>&1 &
+	@echo "$(GREEN)SmartArb Engine started in background$(NC)"
+
+.PHONY: stop
+stop: ## Stop running daemon
+	@echo "$(BLUE)Stopping SmartArb Engine...$(NC)"
+	pkill -f "src.core.engine" || echo "No running instances found"
+
+.PHONY: restart
+restart: stop run ## Restart the application
+
+.PHONY: status
+status: setup-venv ## Show application status
+	@echo "$(BLUE)SmartArb Engine Status:$(NC)"
+	@if pgrep -f "src.core.engine" > /dev/null; then \
+		echo "$(GREEN)✓ Running$(NC)"; \
+		ps aux | grep -E "src.core.engine" | grep -v grep; \
+	else \
+		echo "$(RED)✗ Not running$(NC)"; \
+	fi
+
+##@ 🐳 Docker
+.PHONY: docker-build
+docker-build: ## Build Docker image
+	@echo "$(BLUE)Building Docker image...$(NC)"
+	docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
+	@echo "$(GREEN)Docker image built: $(DOCKER_IMAGE):$(DOCKER_TAG)$(NC)"
+
+.PHONY: docker-build-secure
+docker-build-secure: ## Build secure Docker image
+	@echo "$(BLUE)Building secure Docker image...$(NC)"
+	docker build -f Dockerfile.secure -t $(DOCKER_IMAGE):$(DOCKER_TAG)-secure .
+	@echo "$(GREEN)Secure Docker image built: $(DOCKER_IMAGE):$(DOCKER_TAG)-secure$(NC)"
+
+.PHONY: docker-run
+docker-run: ## Run Docker container
+	@echo "$(BLUE)Running Docker container...$(NC)"
+	docker run -d --name $(PROJECT_NAME) \
+		-p 8000:8000 \
+		--env-file .env.docker \
+		$(DOCKER_IMAGE):$(DOCKER_TAG)
+
+.PHONY: docker-compose-up
+docker-compose-up: ## Start with docker-compose
+	@echo "$(BLUE)Starting with docker-compose...$(NC)"
+	docker-compose up -d
+
+.PHONY: docker-compose-down
+docker-compose-down: ## Stop docker-compose services
+	@echo "$(BLUE)Stopping docker-compose services...$(NC)"
+	docker-compose down
+
+.PHONY: docker-compose-secure
+docker-compose-secure: ## Start with secure docker-compose
+	@echo "$(BLUE)Starting with secure docker-compose...$(NC)"
+	docker-compose -f docker-compose.secure.yml up -d
+
+.PHONY: docker-logs
+docker-logs: ## Show Docker logs
+	docker logs -f $(PROJECT_NAME)
+
+.PHONY: docker-shell
+docker-shell: ## Shell into Docker container
+	docker exec -it $(PROJECT_NAME) /bin/bash
+
+.PHONY: docker-clean
+docker-clean: ## Clean Docker resources
+	@echo "$(BLUE)Cleaning Docker resources...$(NC)"
+	docker container prune -f
+	docker image prune -f
+	docker volume prune -f
+
+##@ 📊 Monitoring and Logs
+.PHONY: health-check
+health-check: setup-venv ## Run health check
+	@echo "$(BLUE)Running health check...$(NC)"
+	$(PYTHON_VENV) scripts/health_check.py
+
+.PHONY: logs
+logs: ## Show application logs
+	@echo "$(BLUE)Showing logs...$(NC)"
+	tail -f logs/smartarb.log
+
+.PHONY: logs-error
+logs-error: ## Show error logs
+	@echo "$(BLUE)Showing error logs...$(NC)"
+	grep -i error logs/smartarb.log | tail -20
+
+.PHONY: system-info
+system-info: ## Show system information
+	@echo "$(BLUE)System Information:$(NC)"
+	@echo "CPU Usage: $$(top -bn1 | grep "Cpu(s)" | awk '{print $$2}' | cut -d'%' -f1)"
+	@echo "Memory Usage: $$(free | grep Mem | awk '{printf("%.2f%%", ($$3/$$2) * 100.0)}')"
+	@echo "Disk Usage: $$(df -h / | tail -1 | awk '{print $$5}')"
+	@if [ "$(IS_RPI)" = "true" ]; then \
+		echo "CPU Temperature: $$(vcgencmd measure_temp | cut -d'=' -f2 2>/dev/null || echo 'N/A')"; \
+		echo "GPU Memory: $$(vcgencmd get_mem gpu | cut -d'=' -f2 2>/dev/null || echo 'N/A')"; \
+	fi
+
+.PHONY: monitor
+monitor: ## Start monitoring dashboard
+	@echo "$(BLUE)Starting monitoring dashboard...$(NC)"
+	$(PYTHON_VENV) -m src.monitoring.dashboard
+
+##@ 🔧 Configuration
+.PHONY: create-config
+create-config: ## Create configuration files from templates
+	@echo "$(BLUE)Creating configuration files...$(NC)"
+	@if [ ! -f .env ]; then \
+		cp .env.example .env; \
+		echo "$(GREEN)✓ Created .env$(NC)"; \
+	fi
+	@if [ ! -f config/settings.yaml ]; then \
+		cp config/settings.yaml.example config/settings.yaml; \
+		echo "$(GREEN)✓ Created config/settings.yaml$(NC)"; \
+	fi
+
+.PHONY: edit-config
+edit-config: create-config ## Edit configuration files
+	@echo "$(BLUE)Opening configuration files...$(NC)"
+	@if command -v code >/dev/null 2>&1; then \
+		code .env config/settings.yaml; \
+	elif command -v nano >/dev/null 2>&1; then \
+		nano .env; \
+		nano config/settings.yaml; \
+	else \
+		echo "$(YELLOW)Please edit .env and config/settings.yaml manually$(NC)"; \
+	fi
+
+.PHONY: validate-config
+validate-config: setup-venv ## Validate configuration
+	@echo "$(BLUE)Validating configuration...$(NC)"
+	$(PYTHON_VENV) -c "from src.utils.config import ConfigManager; ConfigManager().validate_all()"
+
+##@ 🚀 Deployment
+.PHONY: deploy-staging
+deploy-staging: test quality security-scan ## Deploy to staging
+	@echo "$(BLUE)Deploying to staging...$(NC)"
+	@echo "$(YELLOW)This is a placeholder - implement your staging deployment$(NC)"
+
+.PHONY: deploy-prod
+deploy-prod: test quality security-scan ## Deploy to production
+	@echo "$(BLUE)Deploying to production...$(NC)"
+	@echo "$(RED)WARNING: This will deploy to production!$(NC)"
+	@read -p "Are you sure? (yes/no): " confirm && [ "$$confirm" = "yes" ]
+	@echo "$(YELLOW)This is a placeholder - implement your production deployment$(NC)"
+
+.PHONY: backup
+backup: ## Create full backup
+	@echo "$(BLUE)Creating full backup...$(NC)"
+	@mkdir -p backups
+	@timestamp=$$(date +%Y%m%d_%H%M%S); \
+	backup_dir="backups/full_backup_$$timestamp"; \
+	mkdir -p "$$backup_dir"; \
+	cp -r config "$$backup_dir/"; \
+	cp -r logs "$$backup_dir/" 2>/dev/null || true; \
+	cp -r data "$$backup_dir/" 2>/dev/null || true; \
+	tar -czf "$$backup_dir.tar.gz" -C backups "$$(basename $$backup_dir)"; \
+	rm -rf "$$backup_dir"; \
+	echo "$(GREEN)Backup created: $$backup_dir.tar.gz$(NC)"
+
+.PHONY: restore
+restore: ## Restore from backup
+	@echo "$(BLUE)Available backups:$(NC)"
+	@ls -la backups/*.tar.gz 2>/dev/null || echo "No backups found"
+	@read -p "Enter backup filename: " backup; \
+	if [ -f "backups/$$backup" ]; then \
+		tar -xzf "backups/$$backup" -C backups/; \
+		echo "$(GREEN)Backup restored$(NC)"; \
+	else \
+		echo "$(RED)Backup not found$(NC)"; \
+	fi
+
+##@ 🧹 Cleanup
+.PHONY: clean
+clean: ## Clean build artifacts and cache
+	@echo "$(BLUE)Cleaning build artifacts...$(NC)"
+	find . -type d -name __pycache__ -delete
+	find . -type f -name "*.pyc" -delete
+	find . -type d -name "*.egg-info" -exec rm -rf {} +
+	rm -rf build/ dist/ .pytest_cache/ .coverage htmlcov/
+	rm -rf .mypy_cache/ .tox/
+	@echo "$(GREEN)✓ Cleanup completed$(NC)"
+
+.PHONY: clean-all
+clean-all: clean ## Clean everything including venv and data
+	@echo "$(RED)WARNING: This will remove virtual environment and data!$(NC)"
+	@read -p "Are you sure? (yes/no): " confirm && [ "$$confirm" = "yes" ]
+	rm -rf $(VENV_DIR)/ logs/ data/ .coverage htmlcov/
+	@echo "$(GREEN)✓ Complete cleanup finished$(NC)"
+
+.PHONY: clean-secrets
+clean-secrets: ## Securely clean secrets (use with caution!)
+	@echo "$(RED)WARNING: This will permanently delete all secrets!$(NC)"
+	@read -p "Are you sure? (yes/NO): " confirm && [ "$$confirm" = "yes" ]
+	$(PYTHON_VENV) scripts/generate_secrets.py --cleanup
+
+##@ 🎯 Raspberry Pi Specific
+.PHONY: rpi-optimize
+rpi-optimize: ## Apply Raspberry Pi optimizations
+	@if [ "$(IS_RPI)" = "true" ]; then \
+		echo "$(BLUE)Applying Raspberry Pi optimizations...$(NC)"; \
+		$(PYTHON_VENV) scripts/setup_system.py --raspberry-pi --external-ssd; \
+	else \
+		echo "$(YELLOW)Not running on Raspberry Pi - skipping$(NC)"; \
+	fi
+
+.PHONY: rpi-temp
+rpi-temp: ## Show Raspberry Pi temperature
+	@if [ "$(IS_RPI)" = "true" ]; then \
+		echo "$(BLUE)Raspberry Pi Temperature:$(NC)"; \
+		vcgencmd measure_temp; \
+		vcgencmd get_throttled; \
+	else \
+		echo "$(YELLOW)Not running on Raspberry Pi$(NC)"; \
+	fi
+
+.PHONY: rpi-info
+rpi-info: ## Show Raspberry Pi system information
+	@if [ "$(IS_RPI)" = "true" ]; then \
+		echo "$(BLUE)Raspberry Pi Information:$(NC)"; \
+		cat /proc/cpuinfo | grep -E "(model name|Hardware|Revision)" | head -3; \
+		vcgencmd version; \
+		vcgencmd get_mem arm && vcgencmd get_mem gpu; \
+		df -h; \
+	else \
+		echo "$(YELLOW)Not running on Raspberry Pi$(NC)"; \
+	fi
+
+##@ 📚 Documentation
+.PHONY: docs
+docs: setup-venv ## Generate documentation
+	@echo "$(BLUE)Generating documentation...$(NC)"
+	$(VENV_BIN)/sphinx-build -b html docs/ docs/_build/
+	@echo "$(GREEN)Documentation generated: docs/_build/index.html$(NC)"
+
+.PHONY: docs-serve
+docs-serve: setup-venv ## Serve documentation locally
+	@echo "$(BLUE)Serving documentation at http://localhost:8080$(NC)"
+	cd docs/_build && $(PYTHON) -m http.server 8080
+
+##@ 🎯 All-in-One Commands
+.PHONY: full-setup
+full-setup: install-system setup secrets create-config db-setup ## Complete setup for new installation
+	@echo "$(GREEN)🎉 Full setup completed!$(NC)"
+	@echo "$(CYAN)Next steps:$(NC)"
+	@echo "  1. Edit your configuration: $(YELLOW)make edit-config$(NC)"
+	@echo "  2. Add your API keys to .env and config/settings.yaml"
+	@echo "  3. Run tests: $(YELLOW)make test$(NC)"
+	@echo "  4. Start the application: $(YELLOW)make run$(NC)"
+
+.PHONY: ci
+ci: quality test security-scan ## Run all CI checks
+	@echo "$(GREEN)✅ All CI checks passed!$(NC)"
+
+.PHONY: release
+release: clean quality test security-scan docker-build ## Prepare release
+	@echo "$(GREEN)🚀 Release ready!$(NC)"
+
+# =============================================================================
+# INTERNAL TARGETS (not shown in help)
+# =============================================================================
+
+.PHONY: _check-venv
+_check-venv:
+	@if [ ! -f $(PYTHON_VENV) ]; then \
+		echo "$(RED)Virtual environment not found. Run: make setup-venv$(NC)"; \
+		exit 1; \
+	fi
+
+# Auto-update Makefile from template (if template exists)
+.PHONY: update-makefile
+update-makefile:
+	@if [ -f Makefile.template ]; then \
+		cp Makefile.template Makefile; \
+		echo "$(GREEN)Makefile updated from template$(NC)"; \
+	fi
+
+
+# =============================================================================
+# SMARTARB ENGINE + DASHBOARD MANAGEMENT
+# =============================================================================
+
+.PHONY: start
+start: ## Start SmartArb Engine and Dashboard together
+	@echo "Starting SmartArb Engine and Dashboard..."
+	@echo "Activating virtual environment and starting services..."
+	bash -c "source venv/bin/activate && \
+	python -m src.core.engine & echo \$$! > .engine.pid && \
+	sleep 3 && \
+	python src/api/dashboard_server.py & echo \$$! > .dashboard.pid && \
+	echo 'Services started:' && \
+	echo '  - Engine PID: '`cat .engine.pid` && \
+	echo '  - Dashboard PID: '`cat .dashboard.pid` && \
+	echo '  - Dashboard URL: http://localhost:8000' && \
+	echo 'Press Ctrl+C to stop both services'"
+
+.PHONY: start-dev
+start-dev: ## Start in development mode with logs
+	@echo "Starting SmartArb Engine and Dashboard in development mode..."
+	bash -c "source venv/bin/activate && \
+	(python -m src.core.engine 2>&1 | sed 's/^/[ENGINE] /' &) && \
+	sleep 3 && \
+	(python src/api/dashboard_server.py 2>&1 | sed 's/^/[DASHBOARD] /' &) && \
+	wait"
+
+.PHONY: start-separate-ports
+start-separate-ports: ## Start with engine on default, dashboard on 8001
+	@echo "Starting services on separate ports..."
+	bash -c "source venv/bin/activate && \
+	python -m src.core.engine & echo \$$! > .engine.pid && \
+	sleep 3 && \
+	sed 's/port=8000/port=8001/g' src/api/dashboard_server.py > /tmp/dashboard_8001.py && \
+	python /tmp/dashboard_8001.py & echo \$$! > .dashboard.pid && \
+	echo 'Services started:' && \
+	echo '  - Engine PID: '`cat .engine.pid` && \
+	echo '  - Dashboard PID: '`cat .dashboard.pid` && \
+	echo '  - Dashboard URL: http://localhost:8001'"
+
+.PHONY: stop
+stop: ## Stop SmartArb Engine and Dashboard
+	@echo "Stopping SmartArb Engine and Dashboard..."
+	@if [ -f .engine.pid ]; then \
+	kill `cat .engine.pid` 2>/dev/null || true; \
+	rm .engine.pid; \
+	echo "Engine stopped"; \
+	fi
+	@if [ -f .dashboard.pid ]; then \
+	kill `cat .dashboard.pid` 2>/dev/null || true; \
+	rm .dashboard.pid; \
+	echo "Dashboard stopped"; \
+	fi
+	@pkill -f "src.core.engine" 2>/dev/null || true
+	@pkill -f "dashboard_server.py" 2>/dev/null || true
+	@echo "All SmartArb processes stopped"
+
+.PHONY: status
+status: ## Check status of SmartArb services
+	@echo "SmartArb Engine Status:"
+	@if [ -f .engine.pid ]; then \
+	if ps -p `cat .engine.pid` > /dev/null; then \
+	echo "  Engine: Running (PID: `cat .engine.pid`)"; \
+	else \
+	echo "  Engine: Stopped (stale PID file)"; \
+	rm .engine.pid; \
+	fi \
+	else \
+	echo "  Engine: Stopped"; \
+	fi
+	@if [ -f .dashboard.pid ]; then \
+	if ps -p `cat .dashboard.pid` > /dev/null; then \
+	echo "  Dashboard: Running (PID: `cat .dashboard.pid`)"; \
+	else \
+	echo "  Dashboard: Stopped (stale PID file)"; \
+	rm .dashboard.pid; \
+	fi \
+	else \
+	echo "  Dashboard: Stopped"; \
+	fi
+	@echo "Active Python processes:"
+	@ps aux | grep -E "(src.core.engine|dashboard_server)" | grep -v grep || echo "  No SmartArb processes running"
+
+.PHONY: restart
+restart: stop start ## Restart SmartArb Engine and Dashboard
+
+.PHONY: logs
+logs: ## Show logs from both services
+	@echo "Showing recent logs..."
+	@echo "=== Engine Logs ==="
+	@tail -20 logs/smartarb.log 2>/dev/null || echo "No engine logs found"
+	@echo "=== Dashboard Logs ==="
+	@tail -20 logs/dashboard.log 2>/dev/null || echo "No dashboard logs found"
+	@echo "=== System Logs ==="
+	@sudo journalctl -u smartarb -n 10 --no-pager 2>/dev/null || echo "No systemd logs found"
+
+.PHONY: start-systemd
+start-systemd: ## Start using systemd services
+	@echo "Starting SmartArb via systemd..."
+	@sudo systemctl start smartarb-engine smartarb-dashboard 2>/dev/null || sudo systemctl start smartarb
+	@sudo systemctl status smartarb-engine smartarb-dashboard --no-pager 2>/dev/null || sudo systemctl status smartarb --no-pager
+
+.PHONY: stop-systemd
+stop-systemd: ## Stop systemd services
+	@echo "Stopping SmartArb systemd services..."
+	@sudo systemctl stop smartarb-engine smartarb-dashboard 2>/dev/null || sudo systemctl stop smartarb
+
+.PHONY: install-service
+install-service: ## Install systemd services
+	@echo "Installing SmartArb systemd services..."
+	@sudo cp scripts/smartarb-engine.service /etc/systemd/system/ 2>/dev/null || echo "Engine service file not found"
+	@sudo cp scripts/smartarb-dashboard.service /etc/systemd/system/ 2>/dev/null || echo "Dashboard service file not found"
+	@sudo systemctl daemon-reload
+	@sudo systemctl enable smartarb-engine smartarb-dashboard
+	@echo "Services installed and enabled"
+
+.PHONY: url
+url: ## Show dashboard URL and test connection
+	@echo "Dashboard URLs:"
+	@echo "  Local: http://localhost:8000"
+	@echo "  Network: http://`hostname -I | awk '{print $$1}'`:8000"
+	@echo "Testing connection..."
+	@curl -s http://localhost:8000/health | grep -q "healthy" && echo "  Dashboard is responding" || echo "  Dashboard not accessible"
