@@ -781,52 +781,27 @@ class UnifiedSmartArbEngine:
                             fetch('/api/opportunities-timeline')
                                 .then(response => response.json())
                                 .then(data => {{
-                                    // Convert to simpler format for chart
-                                    const executed = data.filter(d => d.executed);
-                                    const missed = data.filter(d => !d.executed);
-                                    
-                                    // Create labels from timestamps (last 12 hours)
-                                    const labels = [];
-                                    for(let i = 11; i >= 0; i--) {{
-                                        const date = new Date();
-                                        date.setHours(date.getHours() - i);
-                                        labels.push(date.getHours() + ':00');
-                                    }}
-                                    
-                                    // Count opportunities per hour
-                                    const executedData = new Array(12).fill(0);
-                                    const missedData = new Array(12).fill(0);
-                                    
-                                    executed.forEach(opp => {{
-                                        const hour = new Date(opp.timestamp).getHours();
-                                        const currentHour = new Date().getHours();
-                                        const index = 11 - (currentHour - hour + 24) % 24;
-                                        if (index >= 0 && index < 12) executedData[index]++;
-                                    }});
-                                    
-                                    missed.forEach(opp => {{
-                                        const hour = new Date(opp.timestamp).getHours();
-                                        const currentHour = new Date().getHours();
-                                        const index = 11 - (currentHour - hour + 24) % 24;
-                                        if (index >= 0 && index < 12) missedData[index]++;
-                                    }});
-                                    
                                     chartInstance = new Chart(ctx, {{
-                                        type: 'bar',
+                                        type: 'scatter',
                                         data: {{
-                                            labels: labels,
                                             datasets: [{{
                                                 label: 'Executed',
-                                                data: executedData,
+                                                data: data.filter(d => d.executed).map(d => ({{
+                                                    x: new Date(d.timestamp),
+                                                    y: d.spread
+                                                }})),
                                                 backgroundColor: '#00ff88',
                                                 borderColor: '#00ff88',
-                                                borderWidth: 1
+                                                pointRadius: 6
                                             }}, {{
                                                 label: 'Missed',
-                                                data: missedData,
+                                                data: data.filter(d => !d.executed).map(d => ({{
+                                                    x: new Date(d.timestamp),
+                                                    y: d.spread
+                                                }})),
                                                 backgroundColor: '#ff4444',
                                                 borderColor: '#ff4444',
-                                                borderWidth: 1
+                                                pointRadius: 4
                                             }}]
                                         }},
                                         options: {{
@@ -839,13 +814,17 @@ class UnifiedSmartArbEngine:
                                             }},
                                             scales: {{
                                                 x: {{
+                                                    type: 'time',
+                                                    time: {{
+                                                        unit: 'hour'
+                                                    }},
                                                     grid: {{ color: 'rgba(255,255,255,0.1)' }},
                                                     ticks: {{ color: '#999' }}
                                                 }},
                                                 y: {{
                                                     title: {{
                                                         display: true,
-                                                        text: 'Opportunities Count',
+                                                        text: 'Spread %',
                                                         color: '#fff'
                                                     }},
                                                     grid: {{ color: 'rgba(255,255,255,0.1)' }},
@@ -1030,9 +1009,7 @@ class UnifiedSmartArbEngine:
     def update_trading_data(self):
         """Update trading data with simulation"""
         self.stats['trades_executed'] += 1
-        self.stats['opportunities_found'] += random.randint(1, 3)
-        
-        trade_profit = random.uniform(8, 35)
+        trade_profit = random.uniform(10, 30)
         self.stats['total_profit'] += trade_profit
         self.stats['daily_pnl'] += trade_profit
         
@@ -1040,12 +1017,6 @@ class UnifiedSmartArbEngine:
         exchange_names = list(self.exchanges.keys())
         selected_exchange = random.choice(exchange_names)
         self.exchanges[selected_exchange]['trades'] += 1
-        self.exchanges[selected_exchange]['volume_24h'] += trade_profit
-        
-        # Update latency simulation
-        for name, data in self.exchanges.items():
-            base_latency = {'Bybit': 45, 'MEXC': 62, 'Kraken': 78}[name]
-            self.exchanges[name]['latency_ms'] = max(20, base_latency + random.randint(-15, 30))
         
         # Update random pair
         pairs = list(self.trading_pairs.keys())
@@ -1080,56 +1051,15 @@ class UnifiedSmartArbEngine:
     
     async def trading_loop(self):
         """Main trading simulation loop"""
-        notification_counter = 0
-        
         while self.is_running:
             try:
-                await asyncio.sleep(10)  # Faster: every 10 seconds
+                await asyncio.sleep(30)  # Simulate every 30 seconds
                 self.update_trading_data()
-                notification_counter += 1
                 
-                # Log every 10 trades
                 if self.stats['trades_executed'] % 10 == 0:
                     mode = "LIVE" if self.is_live_trading else "PAPER"
                     logger.info(f"📈 [{mode}] Trades: {self.stats['trades_executed']}, "
                               f"Profit: ${self.stats['total_profit']:.2f}")
-                
-                # Send Telegram notification every 15 trades (instead of 25)
-                if notification_counter >= 15:
-                    notification_counter = 0
-                    
-                    # Get performance stats
-                    top_exchange = max(self.exchanges.items(), key=lambda x: x[1]['trades'])
-                    top_pair = max(self.trading_pairs.items(), key=lambda x: x[1]['trades'])
-                    avg_latency = sum(ex['latency_ms'] for ex in self.exchanges.values()) / len(self.exchanges)
-                    mode = "🔴 LIVE" if self.is_live_trading else "📄 PAPER"
-                    
-                    message = f"""🚀 <b>SmartArb Professional Report</b>
-
-📊 <b>Performance Metrics:</b>
-📈 Total Trades: {self.stats['trades_executed']}
-💰 Total Profit: ${self.stats['total_profit']:.2f}
-📊 Success Rate: {self.stats['success_rate']:.1f}%
-🎯 Opportunities: {self.stats['opportunities_found']}
-
-🔄 <b>Trading Mode:</b> {mode}
-
-🧠 <b>AI Intelligence:</b>
-Status: {'🟢 Active' if self.ai_status['enabled'] else '🔴 Inactive'}
-Analyses: {self.ai_status['analysis_count']}
-Recommendations: {self.ai_status['recommendations_active']}
-
-🏆 <b>Top Performers:</b>
-{top_exchange[1]['symbol']} Exchange: {top_exchange[0]} ({top_exchange[1]['trades']} trades)
-{top_pair[1]['icon']} Pair: {top_pair[0]} ({top_pair[1]['trades']} trades)
-
-⚡ <b>Network Performance:</b>
-Average Latency: {avg_latency:.0f}ms
-
-⏱️ <b>Uptime:</b> {datetime.now() - self.start_time}
-🌐 <b>Dashboard:</b> http://localhost:8001"""
-                    
-                    await self.send_telegram_notification(message)
                 
             except Exception as e:
                 logger.error(f"❌ Trading loop error: {e}")
